@@ -206,8 +206,10 @@ class ServerRepository(
         return ServerSyncSnapshot(
             profileId = profileId,
             version = localVersion,
-            servers = mutableState.value.connections.mapNotNull { connection ->
-                currentTokens[connection.credentialRef]?.let(connection::toSynced)
+            // Tokenless servers (arrived from another device, not yet signed in here) stay in the set, or the
+            // next push would delete them for every device.
+            servers = mutableState.value.connections.map { connection ->
+                connection.toSynced(currentTokens[connection.credentialRef].orEmpty())
             },
             pendingPush = pendingPush,
             syncedKeys = syncedKeys
@@ -226,8 +228,14 @@ class ServerRepository(
             val credentialRef = local?.credentialRef ?: newId("k")
             val id = local?.id ?: server.id.takeUnless { id -> current.any { it.id == id } || id in usedIds } ?: newId("c")
             usedIds += id
-            updatedTokens[credentialRef] = server.token
-            if (local != null && currentTokens[credentialRef] != server.token) setFailure(local.id, null)
+            val token = server.token.ifBlank { currentTokens[credentialRef].orEmpty() }
+            if (token.isNotBlank()) {
+                updatedTokens[credentialRef] = token
+                if (local != null && currentTokens[credentialRef] != token) setFailure(local.id, null)
+            } else {
+                // No token on this device: the existing "Sign in again" state, not a silent failure.
+                setFailure(id, ServerFailure.AUTH_REQUIRED)
+            }
             server.toConnection(id, credentialRef)
         }
         (current.map { it.id } - usedIds).forEach { setFailure(it, null) }
@@ -284,6 +292,10 @@ class ServerRepository(
         loadedProfileId = profileId
         mutableState.value = ServersUiState(
             connections = stored.connections,
+            // A server that has no token on this device (synced from another one) is a sign-in, not a mystery.
+            failures = stored.connections
+                .filter { stored.tokens[it.credentialRef].isNullOrBlank() }
+                .associate { it.id to ServerFailure.AUTH_REQUIRED },
             revision = mutableState.value.revision + 1
         )
     }

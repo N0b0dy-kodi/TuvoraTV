@@ -5,6 +5,7 @@ import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.data.mediaserver.FakeServerProvider
 import com.nuvio.tv.data.mediaserver.MemoryServerPersistence
 import com.nuvio.tv.data.mediaserver.ServerConnection
+import com.nuvio.tv.data.mediaserver.ServerFailure
 import com.nuvio.tv.data.mediaserver.ServerLibrary
 import com.nuvio.tv.data.mediaserver.ServerMediaKind
 import com.nuvio.tv.data.mediaserver.ServerRepository
@@ -66,10 +67,11 @@ class MediaServerSyncServiceTest {
 
         val connections = repository.uiState.value.connections
         assertEquals(listOf("local-a", "remote-b", "local-c"), connections.map { it.id })
-        assertEquals("new-token", repository.session("local-a")?.token)
+        assertEquals("a remote token never replaces this device's", "old-token", repository.session("local-a")?.token)
+        assertNull("a server from another device has no token here", repository.session("remote-b"))
         assertFalse(connections.first().libraries.single().selected)
         assertEquals(listOf("s1", "s2", "s3"), remote!!.map { it.remoteServerId })
-        assertEquals("token-c", remote!!.last().token)
+        assertEquals("pushed tokens are empty", listOf("", "", ""), remote!!.map { it.token })
     }
 
     @Test
@@ -110,7 +112,7 @@ class MediaServerSyncServiceTest {
     }
 
     @Test
-    fun localChangesArePushedWithTokens() = runBlocking {
+    fun localChangesArePushedWithoutTokens() = runBlocking {
         remote = listOf(synced("a", server = "s1", token = "shared"))
         service.syncFromRemote(1).getOrThrow()
 
@@ -118,7 +120,7 @@ class MediaServerSyncServiceTest {
         service.syncFromRemote(1).getOrThrow()
 
         val pushed = remote!!.single()
-        assertEquals("shared", pushed.token)
+        assertEquals("pushed token is empty", "", pushed.token)
         assertFalse(pushed.libraries.single().selected)
         assertEquals("sync_push_media_servers", calls.last())
     }
@@ -129,7 +131,7 @@ class MediaServerSyncServiceTest {
 
         service.syncFromRemote(1).getOrThrow()
 
-        assertEquals(listOf("token-a"), remote!!.map { it.token })
+        assertEquals("seeded entry has no token", listOf(""), remote!!.map { it.token })
     }
 
     @Test
@@ -153,7 +155,8 @@ class MediaServerSyncServiceTest {
             while (repository.uiState.value.connections.isEmpty()) delay(20)
         }
         assertEquals(listOf("s1"), repository.uiState.value.connections.map { it.remoteServerId })
-        assertEquals("shared", repository.session("a")?.token)
+        assertNull("token did not sync", repository.session("a"))
+        assertEquals(ServerFailure.AUTH_REQUIRED, repository.uiState.value.failures[repository.uiState.value.connections.single().id])
         assertTrue(calls.contains("sync_pull_media_servers"))
     }
 

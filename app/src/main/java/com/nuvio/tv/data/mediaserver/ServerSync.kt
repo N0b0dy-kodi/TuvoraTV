@@ -45,7 +45,11 @@ class ServerSyncSnapshot(
 
 private val syncJson = Json { encodeDefaults = true }
 
-fun List<SyncedServer>.toSyncPayload(): JsonElement = syncJson.encodeToJsonElement(this)
+/**
+ * Access tokens are per-device credentials and never leave the device: the pushed payload keeps address, user and
+ * the rest, with an empty token. The wire field stays (the backend contract is unchanged).
+ */
+fun List<SyncedServer>.toSyncPayload(): JsonElement = syncJson.encodeToJsonElement(map { it.copy(token = "") })
 
 fun serverKey(providerId: String, remoteServerId: String, remoteUserId: String): String =
     "$providerId|$remoteServerId|$remoteUserId"
@@ -58,9 +62,10 @@ internal fun mergeSyncedServers(
     val localByKey = local.associateBy { it.key }
     val remoteKeys = remote.mapTo(mutableSetOf()) { it.key }
     val kept = remote.map { server ->
+        // A remote token is never adopted: this device keeps its own (or none, which asks for a sign-in).
         localByKey[server.key]?.let { local ->
-            server.copy(id = local.id, importWatchState = server.importWatchState ?: local.importWatchState)
-        } ?: server
+            server.copy(id = local.id, token = local.token, importWatchState = server.importWatchState ?: local.importWatchState)
+        } ?: server.copy(token = "")
     }
     val added = local.filter { it.key !in remoteKeys && (syncedKeys == null || it.key !in syncedKeys) }
     return kept + added
