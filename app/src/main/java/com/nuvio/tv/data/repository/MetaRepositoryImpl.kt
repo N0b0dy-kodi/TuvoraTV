@@ -5,6 +5,10 @@ import android.content.Context
 import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.data.mapper.toDomain
+import com.nuvio.tv.data.mediaserver.ServerCatalog
+import com.nuvio.tv.data.mediaserver.ServerItemRef
+import com.nuvio.tv.data.mediaserver.messageRes
+import com.nuvio.tv.data.mediaserver.serverFailure
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.core.iptv.isXtream
@@ -17,12 +21,14 @@ import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.R
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -45,6 +51,7 @@ class MetaRepositoryImpl @Inject constructor(
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
     private val tmdbMetadataService: com.nuvio.tv.core.tmdb.TmdbMetadataService,
     private val iptvItemDisplay: com.nuvio.tv.core.iptv.IptvItemDisplayLookup,
+    private val serverCatalog: ServerCatalog
 ) : MetaRepository {
     companion object {
         private const val TAG = "MetaRepository"
@@ -56,6 +63,7 @@ class MetaRepositoryImpl @Inject constructor(
         private const val MIN_META_TTL_MS = 5L * 60 * 1000
         private const val MAX_META_CACHE_ENTRIES = 32
         private const val MAX_PRIMARY_META_CACHE_ENTRIES = 16
+        private const val SERVER_META_TTL_MS = 60_000L
         /**
          * How long a meta lookup waits for the installed addon list to populate.
          *
@@ -132,6 +140,7 @@ class MetaRepositoryImpl @Inject constructor(
     // Separate cache for full meta fetched from addons (bypasses catalog-level cache)
     private val addonMetaCache = createLruCacheMap<String, CachedMeta>(MAX_META_CACHE_ENTRIES)
     private val primaryAddonMetaCache = createLruCacheMap<String, CachedMeta>(MAX_PRIMARY_META_CACHE_ENTRIES)
+    private val serverMetaCache = createLruCacheMap<String, CachedMeta>(MAX_META_CACHE_ENTRIES)
 
     // In-flight deduplication: prevents concurrent coroutines from firing duplicate requests
     private val inFlightMeta = ConcurrentHashMap<String, Deferred<Meta?>>()
@@ -143,6 +152,14 @@ class MetaRepositoryImpl @Inject constructor(
         type: String,
         id: String
     ): Flow<NetworkResult<Meta>> = flow {
+        ServerItemRef.parse(id)?.let { ref ->
+            emitAll(serverMeta(ref))
+            return@flow
+        }
+        if (ServerCatalog.isServerAddon(addonBaseUrl)) {
+            emitAll(getMetaFromAllAddons(type, id))
+            return@flow
+        }
         val requestedType = type.trim()
         val inferredType = inferCanonicalType(requestedType, id)
 
@@ -319,6 +336,10 @@ class MetaRepositoryImpl @Inject constructor(
         id: String,
         sourceAddonBaseUrl: String?
     ): Flow<NetworkResult<Meta>> = flow {
+        ServerItemRef.parse(id)?.let { ref ->
+            emitAll(serverMeta(ref))
+            return@flow
+        }
         // OWN-SOURCE LANE (media server): its ids resolve their own meta, bypassing addon resolution.
         if (com.nuvio.tv.core.contracts.MetaSourceAccess.handlesId(id)) {
             val meta = com.nuvio.tv.core.contracts.MetaSourceAccess.meta(type, id)
@@ -596,6 +617,10 @@ class MetaRepositoryImpl @Inject constructor(
         type: String,
         id: String
     ): Flow<NetworkResult<Meta>> = flow {
+        ServerItemRef.parse(id)?.let { ref ->
+            emitAll(serverMeta(ref))
+            return@flow
+        }
         if (com.nuvio.tv.core.contracts.MetaSourceAccess.handlesId(id)) {
             val meta = com.nuvio.tv.core.contracts.MetaSourceAccess.meta(type, id)
             if (meta != null) emit(NetworkResult.Success(meta))
@@ -888,12 +913,33 @@ class MetaRepositoryImpl @Inject constructor(
         metaCache.clear()
         addonMetaCache.clear()
         primaryAddonMetaCache.clear()
+        serverMetaCache.clear()
         inFlightMeta.clear()
         inFlightAddonMeta.clear()
         inFlightPrimaryMeta.clear()
     }
 
+    private fun serverMeta(ref: ServerItemRef): Flow<NetworkResult<Meta>> = flow {
+        val key = ref.encode()
+        serverMetaCache[key]?.takeIf { !it.isExpired() }?.let { cached ->
+            emit(NetworkResult.Success(cached.meta))
+            return@flow
+        }
+        emit(NetworkResult.Loading)
+        val meta = try {
+            serverCatalog.details(ref).meta
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            emit(NetworkResult.Error(context.getString(error.serverFailure().messageRes())))
+            return@flow
+        }
+        serverMetaCache[key] = CachedMeta(meta, System.currentTimeMillis() + SERVER_META_TTL_MS)
+        emit(NetworkResult.Success(meta))
+    }
+
     override fun getCachedMeta(type: String, id: String): Meta? {
+        if (ServerItemRef.isServerId(id)) return serverMetaCache[id]?.takeIf { !it.isExpired() }?.meta
         val cacheKey = metaLookupCacheKey(type, id)
         return addonMetaCache[cacheKey]?.takeIf { !it.isExpired() }?.meta
     }

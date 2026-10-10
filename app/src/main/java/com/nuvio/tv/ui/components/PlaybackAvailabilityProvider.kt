@@ -12,6 +12,8 @@ import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.contracts.IptvStreamSources
 import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.data.local.PluginDataStore
+import com.nuvio.tv.data.mediaserver.ServerRepository
+import com.nuvio.tv.data.mediaserver.ServerStreams
 import com.nuvio.tv.domain.repository.AddonRepository
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.ui.screens.home.ContinueWatchingItem
@@ -30,6 +32,8 @@ internal class PlaybackAvailabilityViewModel @Inject constructor(
     pluginDataStore: PluginDataStore,
     metaRepository: MetaRepository,
     iptvStreamSources: IptvStreamSources,
+    serverRepository: ServerRepository,
+    serverStreams: ServerStreams
 ) : ViewModel() {
     // Content types the IPTV sources can serve through the Xtream source lane.
     private val iptvSourceTypes = iptvStreamSources.servedContentTypes
@@ -46,13 +50,15 @@ internal class PlaybackAvailabilityViewModel @Inject constructor(
         addonRepository.getInstalledAddons(),
         enabledScrapers,
         iptvSourceTypes,
-    ) { addons, scrapers, iptvTypes ->
+        serverRepository.uiState
+    ) { addons, scrapers, iptvTypes, _ ->
         PlaybackAvailability(
             addons,
             scrapers,
             isLoaded = true,
             cachedMeta = metaRepository::getCachedMeta,
             iptvSourceTypes = iptvTypes,
+            serverStreams = serverStreams::canServe
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), PlaybackAvailability())
 }

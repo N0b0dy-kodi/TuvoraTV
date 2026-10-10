@@ -1339,8 +1339,8 @@ fun PlayerScreen(
         // Audio track dialog
         AudioSelectionOverlay(
             visible = uiState.showAudioOverlay,
-            tracks = uiState.audioTracks,
-            selectedIndex = uiState.selectedAudioTrackIndex,
+            tracks = uiState.serverAudioTracks.ifEmpty { uiState.audioTracks },
+            selectedIndex = uiState.serverAudioTracks.firstOrNull { it.isSelected }?.index ?: uiState.selectedAudioTrackIndex,
             audioDelayMs = uiState.audioDelayMs,
             audioAmplificationDb = uiState.audioAmplificationDb,
             isAmplificationAvailable = uiState.isAudioAmplificationAvailable,
@@ -1364,8 +1364,12 @@ fun PlayerScreen(
 
         SubtitleSelectionOverlay(
             visible = uiState.showSubtitleOverlay,
-            internalTracks = uiState.subtitleTracks,
-            selectedInternalIndex = uiState.selectedSubtitleTrackIndex,
+            internalTracks = uiState.serverSubtitleTracks.ifEmpty { uiState.subtitleTracks },
+            selectedInternalIndex = if (uiState.serverSubtitleTracks.isEmpty()) {
+                uiState.selectedSubtitleTrackIndex
+            } else {
+                uiState.serverSubtitleTracks.firstOrNull { it.isSelected }?.index ?: -1
+            },
             addonSubtitles = uiState.addonSubtitles,
             selectedAddonSubtitle = uiState.selectedAddonSubtitle,
             subtitleStyle = uiState.subtitleStyle,

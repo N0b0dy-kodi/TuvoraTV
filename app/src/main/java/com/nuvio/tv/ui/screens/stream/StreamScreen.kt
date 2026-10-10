@@ -219,7 +219,7 @@ fun StreamScreen(
         if (openExternalInBrowser(playbackInfo)) {
             return
         }
-        val preference = playerPreference ?: return
+        val preference = if (playbackInfo.isServerStream) PlayerPreference.INTERNAL else playerPreference ?: return
         if (!torrentGatePassed && !passesTorrentGate(playbackInfo)) {
             return
         }
@@ -249,7 +249,7 @@ fun StreamScreen(
             if (!showP2pConsentDialog) viewModel.onEvent(StreamScreenEvent.OnAutoPlayConsumed)
             return
         }
-        val preference = playerPreference ?: return
+        val preference = if (playbackInfo.isServerStream) PlayerPreference.INTERNAL else playerPreference ?: return
         if (uiState.isDirectAutoPlayFlow) {
             // Respect player preference even in direct autoplay flow
             when (preference) {
@@ -471,6 +471,7 @@ fun StreamScreen(
                             it.url == stream.url &&
                                 it.infoHash == stream.infoHash &&
                                 it.ytId == stream.ytId &&
+                                it.serverTarget == stream.serverTarget &&
                                 it.addonName == stream.addonName
                         }
                         if (currentIndex >= 0) {

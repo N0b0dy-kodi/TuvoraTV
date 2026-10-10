@@ -192,6 +192,7 @@ class ProfileSettingsSyncService @Inject constructor(
     private val profileManager: ProfileManager,
     private val profileDataStoreFactory: ProfileDataStoreFactory,
     private val syncClientIdentity: SyncClientIdentity,
+    private val mediaServerSyncService: MediaServerSyncService,
     private val tmdbSettingsDataStore: TmdbSettingsDataStore,
     private val metaRepository: MetaRepository,
     private val cwEnrichmentCache: ContinueWatchingEnrichmentCache
@@ -389,6 +390,8 @@ class ProfileSettingsSyncService @Inject constructor(
         }
 
     fun requestForegroundPull(force: Boolean = false) {
+        // Provider-credential foreground pull is intentionally not wired (credential sync stays OFF).
+        mediaServerSyncService.requestForegroundPull(force)
         if (!authManager.canSync) return
 
         val now = SystemClock.elapsedRealtime()

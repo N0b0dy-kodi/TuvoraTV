@@ -33,6 +33,8 @@ import com.nuvio.tv.data.local.StreamLinkCacheDataStore
 import com.nuvio.tv.data.local.StreamBadgeSettingsDataStore
 import com.nuvio.tv.data.local.BingeGroupCacheDataStore
 import com.nuvio.tv.data.local.StreamAutoPlayMode
+import com.nuvio.tv.data.mediaserver.ServerPlayback
+import com.nuvio.tv.data.mediaserver.ServerStreams
 import com.nuvio.tv.data.repository.ParentalGuideRepository
 import com.nuvio.tv.data.repository.PlaybackIssueErrorInput
 import com.nuvio.tv.data.repository.PlaybackIssueReportRepository
@@ -96,6 +98,8 @@ class PlayerRuntimeController(
     internal val livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
     /** Device memory budget for the player buffers (Part A budget port). */
     internal val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
+    internal val serverPlayback: ServerPlayback,
+    internal val serverStreams: ServerStreams,
     savedStateHandle: SavedStateHandle,
     internal val scope: CoroutineScope,
     /** Profile this playback belongs to (episode shuffle state is profile-scoped). */
@@ -213,6 +217,8 @@ class PlayerRuntimeController(
     internal var currentVideoFrameRate: Float? = null
     internal var currentAudioBitrate: Int? = null
     internal var currentStreamUrl: String
+    internal var reportedServerUrl: String? = null
+    internal var serverAudioChosenByUser = false
     /** The stream URL an audio_output_profile diagnostic was already emitted for — one per stream. */
     @Volatile internal var audioProfileEmittedStreamUrl: String? = null
     /** Monotonic id for the current audio observation; rejects late/stale audio callbacks. */
@@ -691,6 +697,7 @@ class PlayerRuntimeController(
     }
 
     fun onCleared() {
+        stopServerPlayback()
         releasePlayer()
         stopTorrentStream()
         torrentService.shutdown()

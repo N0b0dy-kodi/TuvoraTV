@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModelStore
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.contracts.IptvStreamSources
 import com.nuvio.tv.data.local.PluginDataStore
+import com.nuvio.tv.data.mediaserver.ServerRepository
+import com.nuvio.tv.data.mediaserver.ServerStreams
+import com.nuvio.tv.data.mediaserver.ServersUiState
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.AddonResource
 import com.nuvio.tv.domain.model.ScraperInfo
@@ -51,7 +54,20 @@ class PlaybackAvailabilityViewModelTest {
             val iptvStreamSources = object : IptvStreamSources {
                 override val servedContentTypes = iptvTypes
             }
-            val viewModel = PlaybackAvailabilityViewModel(addonRepository, pluginDataStore, metaRepository, iptvStreamSources)
+            val serverRepository = mockk<ServerRepository> {
+                every { uiState } returns MutableStateFlow(ServersUiState())
+            }
+            val serverStreams = mockk<ServerStreams> {
+                every { canServe(any(), any()) } returns false
+            }
+            val viewModel = PlaybackAvailabilityViewModel(
+                addonRepository,
+                pluginDataStore,
+                metaRepository,
+                iptvStreamSources,
+                serverRepository,
+                serverStreams
+            )
             viewModelStore.put("availability", viewModel)
             backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
                 viewModel.availability.collect {}

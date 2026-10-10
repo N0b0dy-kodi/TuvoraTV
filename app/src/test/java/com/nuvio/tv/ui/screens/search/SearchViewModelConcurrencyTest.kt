@@ -143,6 +143,7 @@ class SearchViewModelConcurrencyTest {
             watchedSeriesStateHolder = watchedSeries,
             posterOptions = mockk<PosterOptionsController>(relaxed = true),
             iptvSearchProvider = NoIptvSearch,
+            serverCatalog = mockk { every { searchAddons } returns flowOf(emptyList()) },
             context = mockk<Context>(relaxed = true)
         )
     }

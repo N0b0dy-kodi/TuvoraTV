@@ -2,6 +2,7 @@ package com.nuvio.tv.data.repository
 
 import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
+import com.nuvio.tv.R
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.profile.ProfileManager
@@ -18,6 +19,7 @@ import com.nuvio.tv.core.tracking.effectiveLibrarySourceMode
 import com.nuvio.tv.core.tracking.providerId
 import com.nuvio.tv.data.local.LibraryPreferences
 import com.nuvio.tv.data.local.TraktSettingsDataStore
+import com.nuvio.tv.data.mediaserver.ServerItemRef
 import com.nuvio.tv.domain.repository.MetaRepository
 import com.nuvio.tv.domain.model.LibraryEntry
 import com.nuvio.tv.domain.model.LibraryEntryInput
@@ -204,6 +206,7 @@ class LibraryRepositoryImpl @Inject constructor(
             ?.takeUnless { com.nuvio.tv.core.sync.LiveFavoriteStoragePolicy.storesLocally(item.itemId, item.itemType) }
             ?.let(trackingProviders::provider)
         if (provider != null) {
+            if (item.isServerItem) throw IllegalStateException(appContext.getString(R.string.library_server_title_unsupported))
             val currentMembership = provider.getMembershipSnapshot(item).listMembership
             val changes = ListMembershipChanges(
                 provider.toggledDefaultMembership(currentMembership)
@@ -240,9 +243,11 @@ class LibraryRepositoryImpl @Inject constructor(
         val membership = mutableMapOf<String, Boolean>()
         membership[LOCAL_LIBRARY_LIST_KEY] = inLocal
 
-        trackingProviders.providers().forEach { provider ->
-            if (provider.isAuthenticated.first()) {
-                membership.putAll(provider.getMembershipSnapshot(item).listMembership)
+        if (!item.isServerItem) {
+            trackingProviders.providers().forEach { provider ->
+                if (provider.isAuthenticated.first()) {
+                    membership.putAll(provider.getMembershipSnapshot(item).listMembership)
+                }
             }
         }
 
@@ -255,12 +260,16 @@ class LibraryRepositoryImpl @Inject constructor(
         confirmedRemovalProviders: Set<TrackingProviderId>
     ): TrackingMembershipApplyResult {
         val desired = changes.desiredMembership
-        val providerChanges = trackingProviders.providers().mapNotNull { provider ->
+        val requestedChanges = trackingProviders.providers().mapNotNull { provider ->
             if (!provider.isAuthenticated.first()) return@mapNotNull null
             desired.filterKeys(provider::recognizesListKey)
                 .takeIf { providerMembership -> providerMembership.isNotEmpty() }
                 ?.let { provider to ListMembershipChanges(it) }
         }
+        if (item.isServerItem && requestedChanges.any { (_, change) -> change.desiredMembership.values.any { it } }) {
+            throw IllegalStateException(appContext.getString(R.string.library_server_title_unsupported))
+        }
+        val providerChanges = if (item.isServerItem) emptyList() else requestedChanges
         val requiredConfirmations = providerChanges.mapNotNull { (provider, providerChange) ->
             provider.membershipRemovalConfirmation(item, providerChange)
                 ?.takeUnless { confirmation -> confirmation.providerId in confirmedRemovalProviders }
@@ -394,3 +403,5 @@ private fun com.nuvio.tv.domain.model.SavedLibraryItem.toLibraryEntry() = Librar
     listedAt = addedAt,
     rawPosterUrl = poster
 )
+private val LibraryEntryInput.isServerItem: Boolean
+    get() = ServerItemRef.isServerId(itemId)

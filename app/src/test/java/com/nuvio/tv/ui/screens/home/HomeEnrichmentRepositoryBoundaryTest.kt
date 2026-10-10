@@ -121,6 +121,7 @@ class HomeEnrichmentRepositoryBoundaryTest {
             xtreamAccountStore = mockk(relaxed = true),
             tmdbMetadataService = mockk(relaxed = true),
             iptvItemDisplay = mockk(relaxed = true),
+            serverCatalog = mockk(relaxed = true),
         )
     }
 
@@ -210,7 +211,8 @@ class HomeEnrichmentRepositoryBoundaryTest {
             watchedSeriesStateHolder = mockk(relaxed = true),
             cwEnrichmentCache = cwEnrichmentCache,
             profileManager = profileManager,
-            tvRecommendationManager = mockk(relaxed = true)
+            tvRecommendationManager = mockk(relaxed = true),
+            serverCatalog = mockk(relaxed = true)
         )
         viewModel.startupGracePeriodActive = false
         viewModel.externalMetaPrefetchEnabled = true

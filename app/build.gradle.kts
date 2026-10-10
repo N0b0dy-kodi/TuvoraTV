@@ -151,8 +151,8 @@ android {
             abiFilters.clear()
             abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a"))
         }
-        versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1065
-        versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "1.1.0-beta.2"
+        versionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull() ?: 1068
+        versionName = providers.gradleProperty("versionNameOverride").orNull?.takeIf { it.isNotBlank() } ?: "1.1.0-beta.5"
 
         buildConfigField("String", "PARENTAL_GUIDE_API_URL", "\"${localProperties.getProperty("PARENTAL_GUIDE_API_URL", "")}\"")
         buildConfigField("String", "INTRODB_API_URL", "\"${localProperties.getProperty("INTRODB_API_URL", "")}\"")
@@ -704,7 +704,7 @@ dependencies {
         "libs/lib-decoder-mpegh-release.aar"
     ))
     add("fullImplementation", files("libs/lib-decoder-iamf-release.aar"))
-    implementation(files("libs/lib-nuvio-engine-android-0.1.2.aar"))
+    implementation(files("libs/lib-nuvio-engine-android-0.1.4.aar"))
     if (useLocalFfmpegDecoder) {
         implementation(project(":ffmpeg-decoder-downmix"))
     } else {

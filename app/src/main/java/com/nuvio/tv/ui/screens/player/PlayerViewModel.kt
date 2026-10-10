@@ -73,6 +73,8 @@ class PlayerViewModel @Inject constructor(
     private val livePlayback: com.nuvio.tv.core.contracts.LivePlayback,
     private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
     private val playbackActivityTracker: com.nuvio.tv.core.player.PlaybackActivityTracker,
+    private val serverPlayback: com.nuvio.tv.data.mediaserver.ServerPlayback,
+    private val serverStreams: com.nuvio.tv.data.mediaserver.ServerStreams,
     private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -127,6 +129,8 @@ class PlayerViewModel @Inject constructor(
         playbackIssueReportRepository = playbackIssueReportRepository,
         livePlayback = livePlayback,
         playerMemoryBudget = playerMemoryBudget,
+        serverPlayback = serverPlayback,
+        serverStreams = serverStreams,
         savedStateHandle = savedStateHandle,
         scope = viewModelScope,
         profileId = launchProfileId

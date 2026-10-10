@@ -1,21 +1,59 @@
 package com.nuvio.tv.core.di
 
-import com.nuvio.tv.core.mediaserver.MediaServerAccountCleaner
+import android.os.Build
+import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
-import dagger.Binds
+import com.nuvio.tv.core.sync.SyncClientIdentity
+import com.nuvio.tv.data.local.ProfileDataStore
+import com.nuvio.tv.data.mediaserver.AndroidServerPersistence
+import com.nuvio.tv.data.mediaserver.ServerRepository
+import com.nuvio.tv.data.mediaserver.emby.EmbyProvider
+import com.nuvio.tv.data.mediaserver.jellyfin.JellyfinProvider
+import com.nuvio.tv.data.mediaserver.mediabrowser.ServerClientIdentity
 import dagger.Module
+import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import java.util.concurrent.TimeUnit
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 
-/**
- * Composition root of the media-server feature: its sign-out / profile-delete cleanup joins the set every other
- * per-profile credential store is already in, so no call is added to the account-reset service.
- */
 @Module
 @InstallIn(SingletonComponent::class)
-internal abstract class MediaServerModule {
-    @Binds
+object MediaServerModule {
+    @Provides
+    @Singleton
+    fun repository(
+        persistence: AndroidServerPersistence,
+        identity: SyncClientIdentity,
+        profileDataStore: ProfileDataStore
+    ): ServerRepository {
+        val http = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
+            .build()
+        val clientIdentity = ServerClientIdentity(
+            device = Build.MODEL.orEmpty().ifBlank { "Android TV" },
+            version = BuildConfig.VERSION_NAME,
+            deviceId = identity::currentClientId
+        )
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val repository = ServerRepository(
+            persistence = persistence,
+            providers = listOf(JellyfinProvider(http, clientIdentity), EmbyProvider(http, clientIdentity)),
+            scope = scope
+        )
+        scope.launch { profileDataStore.activeProfileId.collect(repository::selectProfile) }
+        return repository
+    }
+
+    @Provides
     @IntoSet
-    abstract fun bindMediaServerAccountCleaner(cleaner: MediaServerAccountCleaner): ProfileScopedCredentialStore
+    fun credentialStore(repository: ServerRepository): ProfileScopedCredentialStore = repository
 }

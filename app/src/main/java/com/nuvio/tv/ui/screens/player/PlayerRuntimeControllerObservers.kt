@@ -77,7 +77,7 @@ internal suspend fun PlayerRuntimeController.fetchAddonSubtitlesNow(
                         contentLanguage = contentLanguage,
                         year = year
                     )
-                } else if (currentStreamUrl.isNotBlank()) {
+                } else if (currentStreamUrl.isNotBlank() && !isServerStream) {
                     streamLinkCacheDataStore.save(
                         contentKey = key,
                         url = currentStreamUrl,
@@ -870,7 +870,7 @@ internal fun PlayerRuntimeController.maybeScheduleFirstFrameWatchdog() {
     }
 }
 
-private fun PlayerRuntimeController.scheduleDeferredPlayerReinitialize(
+internal fun PlayerRuntimeController.scheduleDeferredPlayerReinitialize(
     fromPositionMs: Long,
     clearResumeProgress: Boolean = false
 ) {

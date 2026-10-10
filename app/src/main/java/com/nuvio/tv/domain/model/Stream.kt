@@ -2,6 +2,7 @@ package com.nuvio.tv.domain.model
 
 import androidx.compose.runtime.Immutable
 import com.nuvio.tv.core.debrid.DebridProviders
+import com.nuvio.tv.data.mediaserver.ServerPlaybackTarget
 
 /**
  * Represents a stream source from a Stremio addon
@@ -31,7 +32,8 @@ data class Stream(
      * the matched lane); null for add-on / plugin / IPTV streams. Refresh and filtering key on it, falling back
      * to [addonName] for streams that predate it.
      */
-    val sourceId: String? = null
+    val sourceId: String? = null,
+    val serverTarget: ServerPlaybackTarget? = null
 ) {
     /**
      * Returns the primary stream source URL
@@ -150,7 +152,7 @@ data class Stream(
     fun stableKey(occurrence: Int = 0): String = buildString {
         append(addonName)
         append('\u0000')
-        append(url ?: infoHash ?: clientResolve?.infoHash ?: ytId ?: externalUrl ?: "")
+        append(url ?: infoHash ?: clientResolve?.infoHash ?: ytId ?: externalUrl ?: serverTarget?.key() ?: "")
         append('\u0000')
         append(getEffectiveFileIdx() ?: "")
         append('\u0000')

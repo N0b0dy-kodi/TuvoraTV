@@ -164,6 +164,7 @@ class MetaRepositoryCandidateTypeTest {
             xtreamAccountStore = mockk(relaxed = true),
             tmdbMetadataService = mockk(relaxed = true),
             iptvItemDisplay = mockk(relaxed = true),
+            serverCatalog = mockk(relaxed = true),
         )
     }
 }

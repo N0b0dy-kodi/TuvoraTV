@@ -41,7 +41,6 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Explore
-import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
@@ -49,7 +48,6 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.People
-import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
@@ -949,54 +947,6 @@ private fun SettingsDetailPane(
 }
 
 @Composable
-private fun ContentDiscoverySettingsContent(
-    onNavigateToAddons: () -> Unit,
-    onNavigateToPlugins: () -> Unit,
-    showAddons: Boolean,
-    showPlugins: Boolean,
-    initialFocusRequester: FocusRequester?
-) {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md)
-    ) {
-        SettingsDetailHeader(
-            title = stringResource(R.string.settings_content_discovery),
-            subtitle = stringResource(R.string.settings_content_discovery_subtitle)
-        )
-        SettingsGroupCard(modifier = Modifier.fillMaxWidth()) {
-            if (showAddons) {
-                SettingsActionRow(
-                    title = stringResource(R.string.addon_title),
-                    subtitle = stringResource(R.string.settings_content_discovery_addons_subtitle),
-                    onClick = onNavigateToAddons,
-                    leadingIcon = Icons.Default.Extension,
-                    modifier = if (initialFocusRequester != null) {
-                        Modifier.focusRequester(initialFocusRequester)
-                    } else {
-                        Modifier
-                    }
-                )
-            }
-            if (showPlugins) {
-                SettingsActionRow(
-                    title = stringResource(R.string.plugin_title),
-                    subtitle = stringResource(R.string.settings_content_discovery_plugins_subtitle),
-                    onClick = onNavigateToPlugins,
-                    leadingIcon = Icons.Default.Power,
-                    // First visible row takes initial D-pad focus when addons are hidden.
-                    modifier = if (!showAddons && initialFocusRequester != null) {
-                        Modifier.focusRequester(initialFocusRequester)
-                    } else {
-                        Modifier
-                    }
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun EssentialAdvancedSettingsContent(
     experienceModeViewModel: ExperienceModeSettingsViewModel,
     initialFocusRequester: FocusRequester?,
@@ -1199,15 +1149,6 @@ private fun IntegrationSettingsContent(
                                     subtitle = stringResource(R.string.iptv_settings_hub_subtitle),
                                     leadingIcon = Icons.Default.LiveTv,
                                     onClick = { onSelectSection(IntegrationSettingsSection.Iptv) }
-                                )
-                            }
-                            // Jellyfin / Emby servers as sources (their own screens - a full-screen route, like the IPTV pairing).
-                            item(key = "integration_hub_media_servers") {
-                                SettingsActionRow(
-                                    title = stringResource(R.string.ms_settings_title),
-                                    subtitle = stringResource(R.string.ms_settings_hub_subtitle),
-                                    leadingIcon = Icons.Default.Dns,
-                                    onClick = onNavigateToMediaServers
                                 )
                             }
                         }

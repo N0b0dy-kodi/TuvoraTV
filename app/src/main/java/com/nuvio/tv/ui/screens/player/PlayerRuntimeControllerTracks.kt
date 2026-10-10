@@ -1579,6 +1579,10 @@ private fun audioMatchesSubtitleTargetForForced(audioTrack: TrackInfo, target: S
 
 internal fun PlayerRuntimeController.tryAutoSelectPreferredSubtitleFromAvailableTracks() {
     if (autoSubtitleSelected) return
+    if (hasBurnedInServerSubtitle) {
+        Log.d(PlayerRuntimeController.TAG, "AUTO_SUB stop: server is burning in a subtitle")
+        return
+    }
 
     val state = _uiState.value
     val preferredTargets = subtitleLanguageTargets()

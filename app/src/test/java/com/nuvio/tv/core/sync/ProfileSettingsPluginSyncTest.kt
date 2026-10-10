@@ -305,8 +305,8 @@ class ProfileSettingsPluginSyncTest {
         }
         val service = ProfileSettingsSyncService(
             authManager, postgrest, profileManager, factory, identity,
-            // Fork ctor has no providerCredentialSyncService (provider keys never sync remotely).
-            mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)
+            // Fork ctor has no providerCredentialSyncService (provider keys never sync remotely); it adds mediaServerSyncService.
+            mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true)
         )
         services += service
         val plugins = PluginDataStore(mockk(relaxed = true), Moshi.Builder().build(), factory, profileManager)

@@ -32,6 +32,8 @@ import com.nuvio.tv.core.sync.androidtv.AndroidTvChannelSyncService
 import com.nuvio.tv.core.network.IPv4FirstDns
 import com.nuvio.tv.data.local.ImagePerformancePreferences
 import com.nuvio.tv.data.local.SentrySettingsDataStore
+import com.nuvio.tv.data.mediaserver.ServerMatcher
+import com.nuvio.tv.data.mediaserver.ServerUserStateProjection
 import com.nuvio.tv.data.simkl.SimklAnimeIdPreferenceHolder
 import com.posthog.android.PostHogAndroid
 import com.posthog.android.PostHogAndroidConfig
@@ -76,7 +78,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var imagePerformancePreferences: ImagePerformancePreferences
     @Inject lateinit var simklAnimeIdPreferenceHolder: SimklAnimeIdPreferenceHolder
     @Inject lateinit var xtreamIptvSearchProvider: com.nuvio.tv.core.iptv.XtreamIptvSearchProvider
-    @Inject lateinit var mediaServerRegistrations: com.nuvio.tv.core.mediaserver.source.MediaServerSourceRegistrations
+    @Inject lateinit var serverUserStateProjection: ServerUserStateProjection
+    @Inject lateinit var serverMatcher: ServerMatcher
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -122,7 +125,6 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         super.onCreate()
         // Own sources register into the plural source ports (id predicates, search) before anything asks.
         com.nuvio.tv.core.iptv.IptvSourceRegistrations.register(xtreamIptvSearchProvider)
-        mediaServerRegistrations.register()
         // Resolve the memory tier once, before anything sizes a cache from it.
         com.nuvio.tv.core.memory.AndroidMemoryTierProbe.tier(this)
         // Startup journal — foundational to the durable resolver backoff and the crash-loop recovery
@@ -225,6 +227,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
         // Warm the Xtream match indexes off the critical path so the first play/search
         // doesn't pay the full-catalog download (minutes on budget boxes).
         xtreamTmdbResolver.warmUpAll()
+        serverUserStateProjection.start()
+        serverMatcher.start()
         // Load locale synchronously so it's available before Activity.attachBaseContext.
         // SharedPreferences reads are fast (cached in memory after first access).
         val tag = getSharedPreferences("app_locale", Context.MODE_PRIVATE)
@@ -256,7 +260,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 .dns(IPv4FirstDns())
                 .connectTimeout(4, TimeUnit.SECONDS)
                 .readTimeout(5, TimeUnit.SECONDS)
-                .callTimeout(12, TimeUnit.SECONDS)
+                .callTimeout(8, TimeUnit.SECONDS)
                 .addInterceptor { chain ->
                     try {
                         chain.proceed(chain.request())

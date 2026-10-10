@@ -269,6 +269,7 @@ class SearchViewModelIptvLaneTest {
             watchedSeriesStateHolder = watchedSeries,
             posterOptions = mockk<PosterOptionsController>(relaxed = true),
             iptvSearchProvider = iptv,
+            serverCatalog = mockk { every { searchAddons } returns flowOf(emptyList()) },
             context = mockk<Context>(relaxed = true)
         )
     }

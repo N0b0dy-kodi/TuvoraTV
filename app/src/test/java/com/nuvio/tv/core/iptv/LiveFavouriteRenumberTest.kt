@@ -85,6 +85,7 @@ class LiveFavouriteRenumberTest {
             iptvClientFactory = factory,
             xtreamAccountStore = store,
             xtreamStreamSource = streamSource,
+            serverStreams = mockk(relaxed = true),
         )
 
         // Day 1: BBC ONE HD is stream 100 and the user favourites it. All the app keeps is this id.

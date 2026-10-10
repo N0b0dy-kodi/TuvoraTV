@@ -1,5 +1,7 @@
 package com.nuvio.tv.domain.model
 
+import com.nuvio.tv.data.mediaserver.ServerItemRef
+
 object LibrarySyncReducer {
     fun sanitize(state: LibrarySyncState): LibrarySyncState {
         val items = state.items.toItemMap()
@@ -123,6 +125,8 @@ object LibrarySyncReducer {
                 remoteItemsByKey[identity] = localItem
             }
         }
+        // Media-server items are local-only (never synced): keep them even though the server set lacks them.
+        localItems.filterValues { ServerItemRef.isServerId(it.id) }.forEach(remoteItemsByKey::putIfAbsent)
         val reconciledItems = remoteItemsByKey
 
         val pendingChanged = pendingUpserts != beforeUpserts

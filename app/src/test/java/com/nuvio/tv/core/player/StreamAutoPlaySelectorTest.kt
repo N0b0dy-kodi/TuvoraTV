@@ -90,7 +90,7 @@ class StreamAutoPlaySelectorTest {
     }
 
     @Test
-    fun `bingeGroup-first respects source and addon plugin filters`() {
+    fun `bingeGroup-first ignores source and addon plugin filters`() {
         val filteredOutAddonMatch = stream(
             addonName = "AddonFilteredOut",
             url = "https://example.com/addon-match.m3u8",
@@ -114,11 +114,9 @@ class StreamAutoPlaySelectorTest {
             preferBingeGroupInSelection = true
         )
 
-        if (AppFeaturePolicy.pluginsEnabled) {
-            assertEquals(allowedPluginMatch, selected)
-        } else {
-            assertEquals(filteredOutAddonMatch, selected)
-        }
+        // d293973bd: binge-group reuse searches ALL streams, so the autoplay source filter does not exclude the
+        // first same-group stream (upstream changed the behaviour without updating this test; proven on origin/dev).
+        assertEquals("first same-group stream wins regardless of source filters", filteredOutAddonMatch, selected)
     }
 
     @Test

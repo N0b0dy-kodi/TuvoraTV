@@ -6,6 +6,7 @@ import android.util.Log
 import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.data.local.AddonPreferences
+import com.nuvio.tv.data.mediaserver.ServerItemRef
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.model.Subtitle
@@ -47,6 +48,7 @@ class SubtitleRepositoryImpl @Inject constructor(
         season: Int?,
         episode: Int?,
     ): List<Subtitle> = withContext(Dispatchers.IO) {
+        if (ServerItemRef.isServerId(id) || ServerItemRef.isServerId(videoId)) return@withContext emptyList()
         // Privacy + F17: an IPTV id embeds the playlist key and must never reach an add-on. Look the
         // item up under its public IMDb id instead; none -> no request at all.
         if (com.nuvio.tv.core.player.AddonSubtitleIdPolicy.isProviderScoped(id) ||

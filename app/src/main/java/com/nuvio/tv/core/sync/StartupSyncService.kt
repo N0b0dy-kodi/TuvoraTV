@@ -63,6 +63,7 @@ class StartupSyncService @Inject constructor(
     private val watchedItemsSyncService: WatchedItemsSyncService,
     private val profileSettingsSyncService: ProfileSettingsSyncService,
     private val providerCredentialSyncService: ProviderCredentialSyncService,
+    private val mediaServerSyncService: MediaServerSyncService,
     private val profileSyncService: ProfileSyncService,
     private val pluginManager: PluginManager,
     private val addonRepository: AddonRepositoryImpl,
@@ -220,7 +221,7 @@ class StartupSyncService @Inject constructor(
     /** Surfaces [pullSurface] knows by name; fork surfaces come from [realtimeParticipants]. */
     private val namedSurfaces = setOf(
         "addons", "plugins", "library", "watch_progress", "watched_items", "profile_settings",
-        "provider_credentials", "collections", "home_catalog_settings", "profiles",
+        "provider_credentials", "collections", "home_catalog_settings", "profiles", "media_servers",
     )
 
     /** B03: every surface this client can pull (what a version-vector catch-up may plan). */
@@ -267,6 +268,11 @@ class StartupSyncService @Inject constructor(
             "provider_credentials" -> attempt("provider credentials") {
                 providerCredentialSyncService.syncFromRemote(profileId)
                     .onSuccess { applied -> Log.d(TAG, "Realtime provider credential pull completed profile=$profileId applied=$applied") }
+                    .isSuccess
+            }
+            "media_servers" -> attempt("media servers") {
+                mediaServerSyncService.syncFromRemote(profileId)
+                    .onSuccess { applied -> Log.d(TAG, "Realtime media servers pull completed profile=$profileId applied=$applied") }
                     .isSuccess
             }
             "collections" -> attempt("collections") {

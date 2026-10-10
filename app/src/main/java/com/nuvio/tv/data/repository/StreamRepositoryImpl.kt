@@ -15,6 +15,9 @@ import com.nuvio.tv.core.debrid.LocalDebridAvailabilityService
 import com.nuvio.tv.core.plugin.PluginManager
 import com.nuvio.tv.core.tmdb.TmdbService
 import com.nuvio.tv.data.mapper.toDomain
+import com.nuvio.tv.data.mediaserver.ServerStreams
+import com.nuvio.tv.data.mediaserver.messageRes
+import com.nuvio.tv.data.mediaserver.serverFailure
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.core.iptv.isXtream
@@ -58,6 +61,7 @@ class StreamRepositoryImpl @Inject constructor(
     private val iptvClientFactory: com.nuvio.tv.core.iptv.IptvClientFactory,
     private val xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore,
     private val xtreamStreamSource: com.nuvio.tv.core.iptv.match.XtreamStreamSource,
+    private val serverStreams: ServerStreams,
     /** Step 0.3: moves a registered Xtream stream URL onto the playlist's ACTIVE server at play time. */
     private val serverFailover: com.nuvio.tv.core.iptv.PlaylistServerFailover =
         com.nuvio.tv.core.iptv.PlaylistServerFailover.detached(),
@@ -226,8 +230,13 @@ class StreamRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        // Media servers (upstream's native feature): a server item id plays only its own versions, so
+        // add-ons and plugins are skipped; any other id also asks every enabled server for a match.
+        val isNativeServerRequest = serverStreams.isNativeRequest(videoId)
+        val serverSources = serverStreams.sources(type, videoId, season, episode, forceRefresh)
+
         try {
-            val addons = addonRepository.getInstalledAddons().first().enabledAddons()
+            val addons = if (isNativeServerRequest) emptyList() else addonRepository.getInstalledAddons().first().enabledAddons()
             
             // Filter addons that support streams for this type and id
             val streamAddons = addons.filter { addon ->
@@ -237,8 +246,8 @@ class StreamRepositoryImpl @Inject constructor(
             // Convert IMDB ID to TMDB ID if needed for plugins
             val tmdbId = tmdbService.ensureTmdbId(videoId, type)
             Log.d(TAG, LogRedaction.text("Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)"))
-            val pluginRequest = buildPluginRequest(tmdbId, type, videoId)
-            val attemptedAddonNames = streamAddons.map { it.displayName }
+            val pluginRequest = if (isNativeServerRequest) null else buildPluginRequest(tmdbId, type, videoId)
+            val attemptedAddonNames = streamAddons.map { it.displayName } + serverSources.map { it.name }
             val attemptedFailures = java.util.Collections.synchronizedList(
                 mutableListOf<StreamAttemptFailure>()
             )
@@ -273,7 +282,8 @@ class StreamRepositoryImpl @Inject constructor(
                 val totalJobs = streamAddons.size +
                     (if (pluginRequest != null) 1 else 0) +
                     xtreamMatchTargets.size +
-                    sourceMatchGroups.size
+                    sourceMatchGroups.size +
+                    serverSources.size
                 val completedJobs = java.util.concurrent.atomic.AtomicInteger(0)
 
                 // B63: the IPTV jobs wait past their budget only while these (addon + plugin)
@@ -335,6 +345,36 @@ class StreamRepositoryImpl @Inject constructor(
                                 addonName = addon.displayName,
                                 kind = StreamFailureKind.REQUEST_FAILED,
                                 detail = e.message ?: context.getString(com.nuvio.tv.R.string.stream_error_detail_addon_request_failed)
+                            )
+                        } finally {
+                            markNonIptvDone()
+                            if (completedJobs.incrementAndGet() >= totalJobs) {
+                                resultChannel.close()
+                            }
+                        }
+                    }
+                }
+
+                // Launch media-server jobs (one group per connected server; its own versions or a matched title)
+                serverSources.forEach { source ->
+                    launch {
+                        try {
+                            val streams = source.load()
+                            if (streams.isNotEmpty()) {
+                                resultChannel.send(AddonStreams(addonName = source.name, addonLogo = null, streams = streams))
+                            } else {
+                                attemptedFailures += StreamAttemptFailure(
+                                    addonName = source.name,
+                                    kind = StreamFailureKind.MISSING,
+                                    detail = context.getString(com.nuvio.tv.R.string.stream_error_detail_no_streams_for_id)
+                                )
+                            }
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            attemptedFailures += StreamAttemptFailure(
+                                addonName = source.name,
+                                kind = StreamFailureKind.REQUEST_FAILED,
+                                detail = context.getString(e.serverFailure().messageRes())
                             )
                         } finally {
                             markNonIptvDone()
@@ -662,6 +702,7 @@ class StreamRepositoryImpl @Inject constructor(
             ?: url
             ?: externalUrl
             ?: ytId
+            ?: serverTarget?.key()
             ?: "${addonName}:${name}:${title}"
         val nameSuffix = if (base == url) {
             val discriminator = name?.takeIf { it.isNotBlank() }

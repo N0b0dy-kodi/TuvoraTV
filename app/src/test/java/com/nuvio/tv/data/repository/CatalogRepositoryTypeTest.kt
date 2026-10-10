@@ -35,7 +35,7 @@ class CatalogRepositoryTypeTest {
             // the enabled-screens set without this test stubbing it.
             every { customPosterEnabledScreens } returns flowOf(emptySet())
         }
-        val repository = CatalogRepositoryImpl(mockk<Context>(relaxed = true), api, preferences)
+        val repository = CatalogRepositoryImpl(mockk<Context>(relaxed = true), api, preferences, mockk(relaxed = true))
         val descriptor = CatalogDescriptor(ContentType.SERIES, "Series", "mdblist.123", "My shows")
         val first = repository.getCatalog(
             addonBaseUrl = "https://example.com",

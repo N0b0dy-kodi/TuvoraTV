@@ -30,6 +30,7 @@ import androidx.navigation.navArgument
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.domain.model.ExperienceMode
+import com.nuvio.tv.data.mediaserver.ServerCatalog
 import com.nuvio.tv.ui.screens.CatalogSeeAllScreen
 import com.nuvio.tv.ui.screens.ExperienceModeSelectionScreen
 import com.nuvio.tv.ui.screens.LayoutSelectionScreen
@@ -385,6 +386,10 @@ private fun PlaybackNavHost(
             )
         ) { backStackEntry ->
             val detailArgs = backStackEntry.arguments
+            if (ServerCatalog.isCollection(detailArgs?.getString("itemId"), detailArgs?.getString("itemType"))) {
+                ServerCatalogDestination(navController, backStackEntry)
+                return@composable
+            }
             val savedState = backStackEntry.savedStateHandle
             val returnToHomeOnBack = detailArgs
                 ?.getString("returnToHomeOnBack")
@@ -1284,6 +1289,9 @@ private fun PlaybackNavHost(
                         navController.navigate(Screen.Detail.createRoute(itemId, itemType, addonBaseUrl))
                     }
                 },
+                onNavigateToCatalogSeeAll = { catalogId, addonId, type ->
+                    navController.navigate(Screen.CatalogSeeAll.createRoute(catalogId, addonId, type))
+                },
                 onCloudPlaybackResolved = { info ->
                     val filename = info.filename ?: info.file.name
                     navController.navigate(
@@ -1301,40 +1309,6 @@ private fun PlaybackNavHost(
                         )
                     )
                 }
-            )
-        }
-
-        composable(Screen.MediaServers.route) {
-            com.nuvio.tv.ui.screens.mediaserver.MediaServersScreen(
-                onBack = { navController.popBackStack() },
-                onAddServer = { navController.navigate(Screen.MediaServerAdd.createRoute()) },
-                onOpenServer = { key -> navController.navigate(Screen.MediaServerDetails.createRoute(key)) },
-            )
-        }
-
-        composable(
-            route = Screen.MediaServerAdd.route,
-            arguments = listOf(navArgument("entryKey") { type = NavType.StringType; defaultValue = "" }),
-        ) {
-            com.nuvio.tv.ui.screens.mediaserver.MediaServerAddScreen(
-                onBack = { navController.popBackStack() },
-                // Signed in: back to the server list (a plain back would return to the form).
-                onFinished = {
-                    navController.navigate(Screen.MediaServers.route) {
-                        popUpTo(Screen.MediaServers.route) { inclusive = true }
-                        launchSingleTop = true
-                    }
-                },
-            )
-        }
-
-        composable(
-            route = Screen.MediaServerDetails.route,
-            arguments = listOf(navArgument("entryKey") { type = NavType.StringType }),
-        ) {
-            com.nuvio.tv.ui.screens.mediaserver.MediaServerDetailsScreen(
-                onBack = { navController.popBackStack() },
-                onSignIn = { key -> navController.navigate(Screen.MediaServerAdd.createRoute(key)) },
             )
         }
 
@@ -1360,8 +1334,7 @@ private fun PlaybackNavHost(
                     navController.navigate(Screen.LicensesAttributions.route)
                 },
                 onNavigateToIptvPairing = { navController.navigate(Screen.IptvPairing.route) },
-                onNavigateToIptvSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
-                onNavigateToMediaServers = { navController.navigate(Screen.MediaServers.route) }
+                onNavigateToIptvSetupCode = { navController.navigate(Screen.IptvSetupCode.route) }
             )
         }
 
@@ -1643,6 +1616,10 @@ private fun PlaybackNavHost(
             val addonId = backStackEntry.arguments?.getString("addonId") ?: ""
             val type = backStackEntry.arguments?.getString("type") ?: ""
             val fromSearch = backStackEntry.arguments?.getBoolean("fromSearch") ?: false
+            if (ServerCatalog.isServerAddonId(addonId) && !fromSearch) {
+                ServerCatalogDestination(navController, backStackEntry)
+                return@composable
+            }
 
             // When coming from search, get the SearchViewModel from the Search back stack entry
             // so we share the same data (existing results + pagination)

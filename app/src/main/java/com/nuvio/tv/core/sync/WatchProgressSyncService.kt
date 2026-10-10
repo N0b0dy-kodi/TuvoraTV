@@ -9,6 +9,7 @@ import com.nuvio.tv.core.tracking.TrackingProgressProviderRegistry
 import com.nuvio.tv.core.tracking.providerId
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressPreferences
+import com.nuvio.tv.data.mediaserver.ServerItemRef
 import com.nuvio.tv.data.remote.supabase.SupabaseWatchProgress
 import com.nuvio.tv.data.remote.supabase.SupabaseWatchProgressEvent
 import com.nuvio.tv.domain.model.WatchProgress
@@ -129,7 +130,7 @@ class WatchProgressSyncService @Inject constructor(
         return try {
             val distinctKeys = keys
                 .map { it.trim() }
-                .filter { it.isNotEmpty() }
+                .filter { it.isNotEmpty() && !ServerItemRef.isServerId(it) }
                 .distinct()
             if (distinctKeys.isEmpty()) {
                 return Result.success(Unit)
@@ -178,7 +179,8 @@ class WatchProgressSyncService @Inject constructor(
             // Live channels are local-only (acknowledged below without being pushed).
             val entries = canonicalizeForRemote(rawEntries).filterValues { progress ->
                 !(progress.position <= 1L && progress.duration <= 1L && progress.duration > 0L) &&
-                    !isLiveProgress(progress)
+                    !isLiveProgress(progress) &&
+                    !ServerItemRef.isServerId(progress.contentId)
             }
             Log.d(TAG, "pushToRemote: ${rawEntries.size} pending entries, ${entries.size} canonical entries to push for profile $profileId")
             entries.forEach { (key, progress) ->
@@ -234,8 +236,9 @@ class WatchProgressSyncService @Inject constructor(
         progress: WatchProgress,
         profileId: Int
     ): Result<Unit> {
-        if (isLiveProgress(progress)) {
-            // Live progress is local-only: clear it from the outbox without pushing.
+        if (isLiveProgress(progress) || ServerItemRef.isServerId(progress.contentId)) {
+            // Live and media-server progress are local-only (server items report to their own server):
+            // clear it from the outbox without pushing.
             mutationStore.acknowledgeProgressUpserts(mapOf(key to progress), profileId)
             return Result.success(Unit)
         }
