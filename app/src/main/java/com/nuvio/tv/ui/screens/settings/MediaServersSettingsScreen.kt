@@ -136,6 +136,8 @@ internal fun ServerConnection.statusText(providerName: String, failure: ServerFa
 internal fun ServerConnection.statusLabel(failure: ServerFailure?): String? = when {
     !enabled -> stringResource(R.string.servers_status_disabled)
     failure == ServerFailure.AUTH_REQUIRED -> stringResource(R.string.servers_status_auth)
+    failure == ServerFailure.CERTIFICATE_CHANGED -> stringResource(R.string.servers_status_cert_changed)
+    failure == ServerFailure.CERTIFICATE_UNTRUSTED -> stringResource(R.string.servers_status_cert_untrusted)
     failure == ServerFailure.UNREACHABLE -> stringResource(R.string.servers_status_unreachable)
     else -> null
 }

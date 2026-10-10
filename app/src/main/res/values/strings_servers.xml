@@ -30,6 +30,8 @@
     <string name="servers_signed_in_as">%1$s · %2$s</string>
     <string name="servers_status_disabled">Disabled</string>
     <string name="servers_status_auth">Sign in again</string>
+    <string name="servers_status_cert_changed">Certificate changed</string>
+    <string name="servers_status_cert_untrusted">Certificate not trusted</string>
     <string name="servers_status_unreachable">Server unavailable</string>
     <string name="servers_error_auth">Incorrect username or password.</string>
     <string name="servers_error_address">Enter a valid server address.</string>
@@ -57,4 +59,27 @@
     <string name="library_servers_empty_title">No libraries selected</string>
     <string name="library_servers_empty_message">Choose which libraries to show in Settings, under Content &amp; Discovery, then Media servers.</string>
     <string name="library_server_load_failed">Couldn\'t load %1$s</string>
+
+    <string name="servers_failure_cert_untrusted">This server uses a certificate your device does not trust. Sign in again to review it.</string>
+    <string name="servers_failure_cert_changed">The certificate of this server changed. Sign in again to review it.</string>
+    <string name="servers_cert_title">Trust this certificate?</string>
+    <string name="servers_cert_body">%1$s uses a certificate your device does not trust. Only continue if you recognise this fingerprint. It is saved on this device for this server only.</string>
+    <string name="servers_cert_changed_title">Certificate changed</string>
+    <string name="servers_cert_changed_body">The certificate of %1$s is different from the one you trusted before. This can mean someone is intercepting the connection. Only trust the new one if you changed it yourself.</string>
+    <string name="servers_cert_fingerprint">SHA-256 fingerprint</string>
+    <string name="servers_cert_previous">Trusted before</string>
+    <string name="servers_cert_presented">Presented now</string>
+    <string name="servers_cert_trust">Trust and continue</string>
+    <string name="servers_cert_trust_new">Trust the new certificate</string>
+    <string name="servers_qc_button">Sign in with Quick Connect</string>
+    <string name="servers_qc_title">Quick Connect</string>
+    <string name="servers_qc_instructions">On a device already signed in to this server, open Quick Connect and enter this code.</string>
+    <string name="servers_qc_requesting">Requesting a code</string>
+    <string name="servers_qc_expires">Expires in %1$s</string>
+    <string name="servers_qc_completing">Signing in</string>
+    <string name="servers_qc_expired">The code expired. Try again for a new one.</string>
+    <string name="servers_qc_disabled">Quick Connect is turned off on this server.</string>
+    <string name="servers_qc_failed">Quick Connect could not finish. Check the connection and try again.</string>
+    <string name="servers_qc_retry">Try again</string>
+    <string name="servers_qc_use_password">Use password instead</string>
 </resources>

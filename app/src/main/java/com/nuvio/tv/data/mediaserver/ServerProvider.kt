@@ -18,6 +18,17 @@ interface ServerProvider {
 
     suspend fun signIn(address: String, username: String, password: String): ServerSignIn = unsupported()
 
+    /** Jellyfin only: Emby has no Quick Connect, so its sign-in screen never offers it. */
+    val supportsQuickConnect: Boolean get() = false
+
+    suspend fun quickConnectStart(address: String): ServerQuickConnectRequest = unsupported()
+
+    /** One poll: true once someone approved the code; a [ServerFailure.NOT_FOUND] means expired. */
+    suspend fun quickConnectApproved(request: ServerQuickConnectRequest): Boolean = unsupported()
+
+    /** Exchanges the approved secret for THIS device's own token. */
+    suspend fun quickConnectComplete(request: ServerQuickConnectRequest): ServerSignIn = unsupported()
+
     suspend fun libraries(session: ServerSession): List<ServerLibrary>
 
     suspend fun libraryPage(

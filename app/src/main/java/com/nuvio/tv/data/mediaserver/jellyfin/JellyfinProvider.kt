@@ -8,11 +8,13 @@ import okhttp3.OkHttpClient
 
 internal class JellyfinProvider(
     http: OkHttpClient,
-    identity: ServerClientIdentity
-) : MediaBrowserProvider(authorizationHeader = "Authorization", apiPath = "", http = http, identity = identity) {
+    identity: ServerClientIdentity,
+    trust: com.nuvio.tv.data.mediaserver.ServerTrust? = null
+) : MediaBrowserProvider(authorizationHeader = "Authorization", apiPath = "", http = http, identity = identity, trust = trust) {
     override val id: String = "jellyfin"
     override val displayName: String = "Jellyfin"
     override val minimumVersion: String = "10.9"
+    override val supportsQuickConnect: Boolean = true
 
     override fun viewsEndpoint(userId: String) = Endpoint("/UserViews", mapOf("userId" to userId))
 

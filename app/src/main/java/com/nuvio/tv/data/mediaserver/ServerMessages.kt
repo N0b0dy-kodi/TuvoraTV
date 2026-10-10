@@ -11,6 +11,8 @@ fun ServerFailure.messageRes(): Int = when (this) {
     ServerFailure.INCOMPLETE -> R.string.servers_failure_incomplete
     ServerFailure.FORBIDDEN -> R.string.servers_error_forbidden
     ServerFailure.UNSUPPORTED -> R.string.servers_failure_unsupported
+    ServerFailure.CERTIFICATE_UNTRUSTED -> R.string.servers_failure_cert_untrusted
+    ServerFailure.CERTIFICATE_CHANGED -> R.string.servers_failure_cert_changed
     ServerFailure.FAILED -> R.string.servers_error_failed
 }
 

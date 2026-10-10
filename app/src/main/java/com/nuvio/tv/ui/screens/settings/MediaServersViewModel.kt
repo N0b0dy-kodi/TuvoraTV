@@ -2,7 +2,10 @@ package com.nuvio.tv.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nuvio.tv.data.mediaserver.QuickConnectState
+import com.nuvio.tv.data.mediaserver.ServerCertificateException
 import com.nuvio.tv.data.mediaserver.ServerConnection
+import com.nuvio.tv.data.mediaserver.quickConnectFlow
 import com.nuvio.tv.data.mediaserver.ServerException
 import com.nuvio.tv.data.mediaserver.ServerFailure
 import com.nuvio.tv.data.mediaserver.ServerProvider
@@ -12,6 +15,7 @@ import com.nuvio.tv.data.mediaserver.serverFailure
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,7 +23,11 @@ import kotlinx.coroutines.launch
 
 data class ServerSignInState(
     val connecting: Boolean = false,
-    val error: ServerFailure? = null
+    val error: ServerFailure? = null,
+    /** Set when the server presented a certificate the user must review (first trust or a changed one). */
+    val certificate: ServerCertificateException? = null,
+    /** Non-null while a Quick Connect sign-in is on screen. */
+    val quickConnect: QuickConnectState? = null
 )
 
 @HiltViewModel
@@ -43,7 +51,47 @@ class MediaServersViewModel @Inject constructor(
 
     fun provider(connection: ServerConnection): ServerProvider? = repository.provider(connection)
 
+    private var quickConnectJob: Job? = null
+
     fun resetSignIn() {
+        stopQuickConnect()
+        mutableSignIn.value = ServerSignInState()
+    }
+
+    /** Lifecycle-bound: the dialog calls this on dismiss, which cancels the poll. */
+    fun stopQuickConnect() {
+        quickConnectJob?.cancel()
+        quickConnectJob = null
+    }
+
+    fun startQuickConnect(provider: ServerProvider, address: String, onConnected: (ServerConnection) -> Unit) {
+        stopQuickConnect()
+        mutableSignIn.value = ServerSignInState(quickConnect = QuickConnectState.Requesting)
+        quickConnectJob = viewModelScope.launch {
+            quickConnectFlow(provider, address).collect { state ->
+                when (state) {
+                    is QuickConnectState.Authorised -> try {
+                        val connection = repository.connect(provider, state.signIn)
+                        mutableSignIn.value = ServerSignInState()
+                        onConnected(connection)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        mutableSignIn.value = ServerSignInState(quickConnect = QuickConnectState.Failed(ServerException(error.serverFailure())))
+                    }
+                    is QuickConnectState.Failed -> mutableSignIn.value = ServerSignInState(
+                        certificate = state.error as? ServerCertificateException,
+                        quickConnect = state
+                    )
+                    else -> mutableSignIn.value = ServerSignInState(quickConnect = state)
+                }
+            }
+        }
+    }
+
+    /** The user accepted the fingerprint shown for [certificate]; the caller retries what it was doing. */
+    fun trustCertificate(certificate: ServerCertificateException) {
+        repository.trustCertificate(certificate)
         mutableSignIn.value = ServerSignInState()
     }
 
@@ -64,6 +112,8 @@ class MediaServersViewModel @Inject constructor(
             } catch (error: CancellationException) {
                 mutableSignIn.value = ServerSignInState()
                 throw error
+            } catch (error: ServerCertificateException) {
+                mutableSignIn.value = ServerSignInState(error = error.failure, certificate = error)
             } catch (error: ServerException) {
                 mutableSignIn.value = ServerSignInState(error = error.failure)
             } catch (_: Exception) {

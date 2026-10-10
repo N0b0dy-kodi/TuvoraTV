@@ -9,8 +9,9 @@ import okhttp3.OkHttpClient
 
 internal class EmbyProvider(
     http: OkHttpClient,
-    identity: ServerClientIdentity
-) : MediaBrowserProvider(authorizationHeader = "X-Emby-Authorization", apiPath = "/emby", http = http, identity = identity) {
+    identity: ServerClientIdentity,
+    trust: com.nuvio.tv.data.mediaserver.ServerTrust? = null
+) : MediaBrowserProvider(authorizationHeader = "X-Emby-Authorization", apiPath = "/emby", http = http, identity = identity, trust = trust) {
     override val id: String = "emby"
     override val displayName: String = "Emby"
     override val minimumVersion: String = "4.7"

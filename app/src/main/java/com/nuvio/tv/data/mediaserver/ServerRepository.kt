@@ -31,7 +31,8 @@ class ServerRepository(
     private val persistence: ServerPersistence,
     val providers: List<ServerProvider>,
     private val scope: CoroutineScope,
-    initialProfileId: Int = 1
+    initialProfileId: Int = 1,
+    private val trust: ServerTrust? = null
 ) : ProfileScopedCredentialStore {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val lock = Any()
@@ -100,7 +101,8 @@ class ServerRepository(
             }
         } catch (error: ServerException) {
             if (startedGeneration == generation &&
-                (error.failure == ServerFailure.AUTH_REQUIRED || error.failure == ServerFailure.UNREACHABLE)
+                (error.failure == ServerFailure.AUTH_REQUIRED || error.failure == ServerFailure.UNREACHABLE ||
+                    error.failure == ServerFailure.CERTIFICATE_UNTRUSTED || error.failure == ServerFailure.CERTIFICATE_CHANGED)
             ) {
                 setFailure(connectionId, error.failure)
             }
@@ -112,7 +114,21 @@ class ServerRepository(
         ensureLoaded()
         val startedGeneration = generation
         val profileId = loadedProfileId ?: activeProfileId
-        val signIn = provider.signIn(address, username, password)
+        return storeSignIn(provider, provider.signIn(address, username, password), startedGeneration, profileId)
+    }
+
+    /** Stores a sign-in made elsewhere (Quick Connect): the token it carries is this device's own. */
+    suspend fun connect(provider: ServerProvider, signIn: ServerSignIn): ServerConnection {
+        ensureLoaded()
+        return storeSignIn(provider, signIn, generation, loadedProfileId ?: activeProfileId)
+    }
+
+    private suspend fun storeSignIn(
+        provider: ServerProvider,
+        signIn: ServerSignIn,
+        startedGeneration: Long,
+        profileId: Int
+    ): ServerConnection {
         val existing = mutableState.value.connections.firstOrNull {
             it.providerId == provider.id &&
                 it.remoteServerId == signIn.serverId &&
@@ -273,7 +289,14 @@ class ServerRepository(
         if (loadedProfileId == a || loadedProfileId == b) load(loadedProfileId ?: return)
     }
 
+    /** The user accepted the fingerprint shown for [error]: pin it for that exact host:port (this device only). */
+    fun trustCertificate(error: ServerCertificateException) {
+        trust?.pin(error.authority, error.fingerprint)
+        mutableState.update { state -> state.copy(failures = state.failures.filterValues { it != ServerFailure.CERTIFICATE_UNTRUSTED && it != ServerFailure.CERTIFICATE_CHANGED }) }
+    }
+
     override fun clearAllProfiles() {
+        trust?.clearAll()
         generation++
         synchronized(lock) { tokens = emptyMap() }
         loadedProfileId = null

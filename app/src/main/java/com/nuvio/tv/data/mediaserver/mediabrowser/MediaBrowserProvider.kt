@@ -1,6 +1,8 @@
 package com.nuvio.tv.data.mediaserver.mediabrowser
 
 import com.nuvio.tv.data.mediaserver.ServerCandidate
+import com.nuvio.tv.data.mediaserver.ServerQuickConnectRequest
+import com.nuvio.tv.data.mediaserver.ServerTrust
 import com.nuvio.tv.data.mediaserver.ServerCapability
 import com.nuvio.tv.data.mediaserver.ServerEpisode
 import com.nuvio.tv.data.mediaserver.ServerException
@@ -41,11 +43,12 @@ internal abstract class MediaBrowserProvider(
     authorizationHeader: String,
     private val apiPath: String,
     http: OkHttpClient,
-    identity: ServerClientIdentity
+    identity: ServerClientIdentity,
+    trust: ServerTrust? = null
 ) : ServerProvider {
     override val capabilities: Set<ServerCapability> = ServerCapability.entries.toSet()
 
-    private val client = MediaBrowserClient(authorizationHeader, http, identity)
+    private val client = MediaBrowserClient(authorizationHeader, http, identity, trust)
     private val aioStreamsServers = ConcurrentHashMap<String, Boolean>()
     private val libraryGenres = ConcurrentHashMap<String, String>()
 
@@ -72,7 +75,10 @@ internal abstract class MediaBrowserProvider(
             token = null,
             body = client.json.encodeToString(AuthRequest.serializer(), AuthRequest(username, password))
         )
-        val result = client.json.decodeFromString(AuthResult.serializer(), response.body)
+        return signInFrom(client.json.decodeFromString(AuthResult.serializer(), response.body), baseUrl, info, username)
+    }
+
+    private fun signInFrom(result: AuthResult, baseUrl: String, info: PublicInfo, fallbackName: String): ServerSignIn {
         val user = result.user ?: throw ServerException(ServerFailure.AUTH_REQUIRED)
         val token = result.accessToken?.takeIf { it.isNotBlank() } ?: throw ServerException(ServerFailure.AUTH_REQUIRED)
         val serverId = result.serverId ?: info.id ?: throw ServerException(ServerFailure.FAILED)
@@ -81,9 +87,44 @@ internal abstract class MediaBrowserProvider(
             serverName = info.serverName?.takeIf { it.isNotBlank() } ?: baseUrl.toHttpUrl().host,
             serverId = serverId,
             userId = user.id,
-            userName = user.name ?: username,
+            userName = user.name ?: fallbackName,
             token = token
         )
+    }
+
+    // Quick Connect (Jellyfin QuickConnectController / UserController): Initiate and Connect are anonymous (a
+    // disabled server answers 401 to Initiate); the approving client calls Authorize; this device then exchanges its own secret.
+    override suspend fun quickConnectStart(address: String): ServerQuickConnectRequest {
+        if (!supportsQuickConnect) throw ServerException(ServerFailure.UNSUPPORTED)
+        val normalized = normalizeServerAddress(address, apiPath) ?: throw ServerException(ServerFailure.NOT_FOUND)
+        val (baseUrl, info) = publicInfo(normalized)
+        if (!isSupported(info)) throw ServerException(ServerFailure.UNSUPPORTED)
+        val response = client.execute("POST", baseUrl + apiPath, "/QuickConnect/Initiate", token = null)
+        val result = client.json.decodeFromString(QuickConnectResultDto.serializer(), response.body)
+        val code = result.code?.takeIf { it.isNotBlank() }
+        val secret = result.secret?.takeIf { it.isNotBlank() }
+        if (code == null || secret == null) throw ServerException(ServerFailure.FAILED)
+        return ServerQuickConnectRequest(baseUrl, code, secret)
+    }
+
+    override suspend fun quickConnectApproved(request: ServerQuickConnectRequest): Boolean {
+        val response = client.execute(
+            "GET", request.address + apiPath, "/QuickConnect/Connect",
+            token = null, query = mapOf("secret" to request.secret)
+        )
+        return client.json.decodeFromString(QuickConnectResultDto.serializer(), response.body).authenticated
+    }
+
+    override suspend fun quickConnectComplete(request: ServerQuickConnectRequest): ServerSignIn {
+        val (baseUrl, info) = publicInfo(request.address)
+        val response = client.execute(
+            method = "POST",
+            baseUrl = baseUrl + apiPath,
+            path = "/Users/AuthenticateWithQuickConnect",
+            token = null,
+            body = client.json.encodeToString(QuickConnectAuthRequest.serializer(), QuickConnectAuthRequest(request.secret))
+        )
+        return signInFrom(client.json.decodeFromString(AuthResult.serializer(), response.body), baseUrl, info, "")
     }
 
     private suspend fun publicInfo(baseUrl: String): Pair<String, PublicInfo> {

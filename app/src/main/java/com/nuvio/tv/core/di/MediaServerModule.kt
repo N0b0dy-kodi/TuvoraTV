@@ -6,7 +6,9 @@ import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
 import com.nuvio.tv.core.sync.SyncClientIdentity
 import com.nuvio.tv.data.local.ProfileDataStore
 import com.nuvio.tv.data.mediaserver.AndroidServerPersistence
+import com.nuvio.tv.data.mediaserver.AndroidServerTrustStore
 import com.nuvio.tv.data.mediaserver.ServerRepository
+import com.nuvio.tv.data.mediaserver.ServerTrust
 import com.nuvio.tv.data.mediaserver.emby.EmbyProvider
 import com.nuvio.tv.data.mediaserver.jellyfin.JellyfinProvider
 import com.nuvio.tv.data.mediaserver.mediabrowser.ServerClientIdentity
@@ -28,10 +30,15 @@ import okhttp3.OkHttpClient
 object MediaServerModule {
     @Provides
     @Singleton
+    fun trust(store: AndroidServerTrustStore): ServerTrust = ServerTrust(store)
+
+    @Provides
+    @Singleton
     fun repository(
         persistence: AndroidServerPersistence,
         identity: SyncClientIdentity,
-        profileDataStore: ProfileDataStore
+        profileDataStore: ProfileDataStore,
+        trust: ServerTrust
     ): ServerRepository {
         val http = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -46,8 +53,9 @@ object MediaServerModule {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val repository = ServerRepository(
             persistence = persistence,
-            providers = listOf(JellyfinProvider(http, clientIdentity), EmbyProvider(http, clientIdentity)),
-            scope = scope
+            providers = listOf(JellyfinProvider(http, clientIdentity, trust), EmbyProvider(http, clientIdentity, trust)),
+            scope = scope,
+            trust = trust
         )
         scope.launch { profileDataStore.activeProfileId.collect(repository::selectProfile) }
         return repository

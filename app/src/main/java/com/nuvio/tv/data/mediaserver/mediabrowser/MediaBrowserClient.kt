@@ -12,6 +12,9 @@ import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
+import java.util.concurrent.ConcurrentHashMap
+import com.nuvio.tv.data.mediaserver.ServerTrust
+import com.nuvio.tv.data.mediaserver.withServerTrust
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -30,12 +33,23 @@ class ServerClientIdentity(
 internal class MediaBrowserClient(
     private val authorizationHeader: String,
     http: OkHttpClient,
-    private val identity: ServerClientIdentity
+    private val identity: ServerClientIdentity,
+    private val trust: ServerTrust? = null
 ) {
     private val http = http.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
         .build()
+
+    // One client per https authority: its TLS glue knows exactly which host it is validating, and a pinned
+    // certificate is honoured for that host only.
+    private val perAuthority = ConcurrentHashMap<String, OkHttpClient>()
+
+    private fun clientFor(url: HttpUrl): OkHttpClient {
+        val trust = trust ?: return http
+        if (!url.isHttps) return http
+        return perAuthority.getOrPut(authorityOf(url)) { http.withServerTrust(authorityOf(url), trust) }
+    }
 
     val json = Json {
         ignoreUnknownKeys = true
@@ -81,7 +95,8 @@ internal class MediaBrowserClient(
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            throw ServerException(ServerFailure.UNREACHABLE)
+            // A refused certificate is a prompt (fingerprint / re-trust), not "unreachable".
+            throw trust?.takeCertificateError(authorityOf(request.url)) ?: ServerException(ServerFailure.UNREACHABLE)
         }
         if (allowRedirect && response.status in 300..399) return response
         throwForStatus(response.status)
@@ -104,7 +119,7 @@ internal class MediaBrowserClient(
     }
 
     private suspend fun send(request: Request): ApiResponse = suspendCancellableCoroutine { continuation ->
-        val call = http.newCall(request)
+        val call = clientFor(request.url).newCall(request)
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -162,6 +177,8 @@ internal fun buildUrl(baseUrl: String, path: String, query: Map<String, String?>
         .build()
         .toString()
 }
+
+internal fun authorityOf(url: HttpUrl): String = "${url.host}:${url.port}".lowercase()
 
 internal fun pathSegment(value: String): String =
     HttpUrl.Builder().scheme("http").host("h").addPathSegment(value).build().encodedPath.removePrefix("/")
