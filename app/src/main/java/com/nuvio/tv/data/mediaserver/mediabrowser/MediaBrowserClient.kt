@@ -1,5 +1,7 @@
 package com.nuvio.tv.data.mediaserver.mediabrowser
 
+import com.nuvio.tv.data.mediaserver.ServerCertificateRefusedException
+import com.nuvio.tv.data.mediaserver.ServerConnectException
 import com.nuvio.tv.data.mediaserver.ServerException
 import com.nuvio.tv.data.mediaserver.ServerFailure
 import java.io.IOException
@@ -95,8 +97,12 @@ internal class MediaBrowserClient(
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            // A refused certificate is a prompt (fingerprint / re-trust), not "unreachable".
-            throw trust?.takeCertificateError(authorityOf(request.url)) ?: ServerException(ServerFailure.UNREACHABLE)
+            // A refused certificate is a prompt (fingerprint / re-trust), not "unreachable"; one that cannot be offered is a
+            // refusal, never a reason to try plain http. Everything else is a failure to connect.
+            val authority = authorityOf(request.url)
+            trust?.takeCertificateError(authority)?.let { throw it }
+            if (trust?.hasRefusal(authority) == true) throw ServerCertificateRefusedException()
+            throw ServerConnectException()
         }
         if (allowRedirect && response.status in 300..399) return response
         throwForStatus(response.status)
@@ -104,7 +110,7 @@ internal class MediaBrowserClient(
     }
 
     fun authorizationValue(token: String?): String = buildString {
-        append("MediaBrowser Client=\"Nuvio\", Device=\"")
+        append("MediaBrowser Client=\"Tuvora\", Device=\"")
         append(identity.device.headerValue())
         append("\", DeviceId=\"")
         append(deviceId.headerValue())
@@ -186,7 +192,8 @@ internal fun pathSegment(value: String): String =
 internal fun normalizeServerAddress(input: String, apiPath: String = ""): String? {
     var value = input.trim().trimEnd('/')
     if (value.isEmpty()) return null
-    if (!value.contains("://")) value = "http://$value"
+    // No scheme means https: whether plain http may be used is ServerAddressPolicy's decision (it asks the user), never a default.
+    if (!value.contains("://")) value = "https://$value"
     val url = value.toHttpUrlOrNull() ?: return null
     if (url.host.isBlank() || url.username.isNotEmpty() || url.password.isNotEmpty()) return null
     val path = url.encodedPath.trimEnd('/')

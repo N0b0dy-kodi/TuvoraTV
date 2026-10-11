@@ -11,6 +11,9 @@ interface ServerPersistence {
     fun read(profileId: Int): String?
     fun write(profileId: Int, value: String?)
     fun clear()
+
+    /** Whether any server credentials are stored for any profile (a device that signed in before keeps its device id). */
+    fun hasAny(): Boolean = false
 }
 
 @Serializable
@@ -32,4 +35,5 @@ class AndroidServerPersistence @Inject constructor(
     override fun read(profileId: Int): String? = preferences.read(profileId)
     override fun write(profileId: Int, value: String?) = preferences.write(profileId, value)
     override fun clear() = preferences.clear()
+    override fun hasAny(): Boolean = preferences.hasAny()
 }

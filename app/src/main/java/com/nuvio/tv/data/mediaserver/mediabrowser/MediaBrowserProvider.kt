@@ -1,6 +1,8 @@
 package com.nuvio.tv.data.mediaserver.mediabrowser
 
+import com.nuvio.tv.data.mediaserver.ServerAddressPolicy
 import com.nuvio.tv.data.mediaserver.ServerCandidate
+import com.nuvio.tv.data.mediaserver.ServerPlainHttpException
 import com.nuvio.tv.data.mediaserver.ServerQuickConnectRequest
 import com.nuvio.tv.data.mediaserver.ServerTrust
 import com.nuvio.tv.data.mediaserver.ServerCapability
@@ -65,8 +67,7 @@ internal abstract class MediaBrowserProvider(
     internal open fun isSupported(info: PublicInfo): Boolean = isSupportedVersion(info.version)
 
     override suspend fun signIn(address: String, username: String, password: String): ServerSignIn {
-        val normalized = normalizeServerAddress(address, apiPath) ?: throw ServerException(ServerFailure.NOT_FOUND)
-        val (baseUrl, info) = publicInfo(normalized)
+        val (baseUrl, info) = reach(address)
         if (!isSupported(info)) throw ServerException(ServerFailure.UNSUPPORTED)
         val response = client.execute(
             method = "POST",
@@ -96,8 +97,7 @@ internal abstract class MediaBrowserProvider(
     // disabled server answers 401 to Initiate); the approving client calls Authorize; this device then exchanges its own secret.
     override suspend fun quickConnectStart(address: String): ServerQuickConnectRequest {
         if (!supportsQuickConnect) throw ServerException(ServerFailure.UNSUPPORTED)
-        val normalized = normalizeServerAddress(address, apiPath) ?: throw ServerException(ServerFailure.NOT_FOUND)
-        val (baseUrl, info) = publicInfo(normalized)
+        val (baseUrl, info) = reach(address)
         if (!isSupported(info)) throw ServerException(ServerFailure.UNSUPPORTED)
         val response = client.execute("POST", baseUrl + apiPath, "/QuickConnect/Initiate", token = null)
         val result = client.json.decodeFromString(QuickConnectResultDto.serializer(), response.body)
@@ -125,6 +125,35 @@ internal abstract class MediaBrowserProvider(
             body = client.json.encodeToString(QuickConnectAuthRequest.serializer(), QuickConnectAuthRequest(request.secret))
         )
         return signInFrom(client.json.decodeFromString(AuthResult.serializer(), response.body), baseUrl, info, "")
+    }
+
+    /**
+     * The server's public info and its base URL for a typed [address], following [ServerAddressPolicy]: an explicit scheme as
+     * typed; otherwise https first, and plain http only as an offer ([ServerPlainHttpException]) after https failed to connect -
+     * never silently, so nothing secret is sent before the user agreed. Only the unauthenticated public-info request is made here.
+     */
+    private suspend fun reach(address: String): Pair<String, PublicInfo> {
+        val attempts = ServerAddressPolicy.attempts(address)
+            .map { normalizeServerAddress(it, apiPath) ?: throw ServerException(ServerFailure.NOT_FOUND) }
+        val first = attempts.firstOrNull() ?: throw ServerException(ServerFailure.NOT_FOUND)
+        try {
+            return publicInfo(first)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val plain = attempts.getOrNull(1)
+            if (plain == null || !ServerAddressPolicy.fallsBackToPlainHttp(ServerAddressPolicy.outcomeOf(error))) throw error
+            val answers = try {
+                publicInfo(plain)
+                true
+            } catch (inner: CancellationException) {
+                throw inner
+            } catch (_: Exception) {
+                false
+            }
+            if (answers) throw ServerPlainHttpException(plain)
+            throw error
+        }
     }
 
     private suspend fun publicInfo(baseUrl: String): Pair<String, PublicInfo> {
@@ -593,7 +622,7 @@ internal abstract class MediaBrowserProvider(
     }
 
     private fun deviceProfile(capabilities: ServerPlayerCapabilities) = DeviceProfile(
-        name = "Nuvio",
+        name = "Tuvora",
         maxStreamingBitrate = MAX_STREAMING_BITRATE,
         directPlayProfiles = if (capabilities.allowDirectPlay) {
             listOf(DirectPlayProfile())

@@ -462,7 +462,7 @@ fun LibraryScreen(
 
             if (uiState.visibleItems.isEmpty()) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    val selectedTypeLabel = uiState.selectedTypeTab?.let { localizedTypeLabel(it.key) }?.lowercase() ?: stringResource(R.string.library_type_items)
+                    val selectedTypeLabel = uiState.selectedTypeTab?.takeUnless { it.key.equals(LibraryTypeTab.ALL_KEY, ignoreCase = true) }?.let { localizedTypeLabel(it.key) }?.lowercase() ?: stringResource(R.string.library_type_items)
                     val title = when {
                         uiState.sourceMode == LibrarySourceMode.TRAKT && !uiState.isTrackingAuthenticated -> stringResource(R.string.library_empty_trakt_not_auth_title)
                         uiState.sourceMode == LibrarySourceMode.SIMKL && !uiState.isTrackingAuthenticated -> stringResource(R.string.library_empty_simkl_not_auth_title)

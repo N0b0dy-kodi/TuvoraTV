@@ -8,6 +8,7 @@ import com.nuvio.tv.data.mediaserver.ServerConnection
 import com.nuvio.tv.data.mediaserver.quickConnectFlow
 import com.nuvio.tv.data.mediaserver.ServerException
 import com.nuvio.tv.data.mediaserver.ServerFailure
+import com.nuvio.tv.data.mediaserver.ServerPlainHttpException
 import com.nuvio.tv.data.mediaserver.ServerProvider
 import com.nuvio.tv.data.mediaserver.ServerRepository
 import com.nuvio.tv.data.mediaserver.ServersUiState
@@ -27,7 +28,9 @@ data class ServerSignInState(
     /** Set when the server presented a certificate the user must review (first trust or a changed one). */
     val certificate: ServerCertificateException? = null,
     /** Non-null while a Quick Connect sign-in is on screen. */
-    val quickConnect: QuickConnectState? = null
+    val quickConnect: QuickConnectState? = null,
+    /** Set when the address only answers over plain http: nothing was sent, the user must confirm first. */
+    val plainHttpAddress: String? = null
 )
 
 @HiltViewModel
@@ -81,6 +84,7 @@ class MediaServersViewModel @Inject constructor(
                     }
                     is QuickConnectState.Failed -> mutableSignIn.value = ServerSignInState(
                         certificate = state.error as? ServerCertificateException,
+                        plainHttpAddress = (state.error as? ServerPlainHttpException)?.httpAddress,
                         quickConnect = state
                     )
                     else -> mutableSignIn.value = ServerSignInState(quickConnect = state)
@@ -114,6 +118,8 @@ class MediaServersViewModel @Inject constructor(
                 throw error
             } catch (error: ServerCertificateException) {
                 mutableSignIn.value = ServerSignInState(error = error.failure, certificate = error)
+            } catch (error: ServerPlainHttpException) {
+                mutableSignIn.value = ServerSignInState(plainHttpAddress = error.httpAddress)
             } catch (error: ServerException) {
                 mutableSignIn.value = ServerSignInState(error = error.failure)
             } catch (_: Exception) {

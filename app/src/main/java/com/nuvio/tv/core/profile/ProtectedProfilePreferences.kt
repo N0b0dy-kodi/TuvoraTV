@@ -50,6 +50,8 @@ class ProtectedProfilePreferences(
         if (!editor.commit()) throw IOException("Unable to save protected credentials")
     }
 
+    fun hasAny(): Boolean = synchronized(lock) { preferences.all.keys.any { it.startsWith("profile.") } }
+
     fun clear() = synchronized(lock) {
         if (!preferences.edit().clear().commit()) throw IOException("Unable to clear protected credentials")
     }

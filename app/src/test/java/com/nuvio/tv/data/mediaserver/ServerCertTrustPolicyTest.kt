@@ -107,6 +107,19 @@ class ServerCertTrustPolicyTest {
     }
 
     @Test
+    fun anExpiredRefusalIsRememberedForThirtySecondsEvenThoughItIsNotOffered() {
+        var now = 1_000L
+        val trust = ServerTrust(MemoryServerTrustStore(), nowMs = { now })
+        assertFalse("nothing refused yet", trust.hasRefusal("nas.lan:8920"))
+        trust.check("nas.lan:8920", false, FailureKind.EXPIRED, "AA")
+
+        assertNull(trust.takeCertificateError("nas.lan:8920"))
+        assertTrue("reading an unofferable refusal keeps it", trust.hasRefusal("nas.lan:8920"))
+        now += 30_001L
+        assertFalse("the refusal ages out", trust.hasRefusal("nas.lan:8920"))
+    }
+
+    @Test
     fun displayFingerprintIsGroupedHex() {
         assertEquals("AB:CD:EF:01", formatFingerprint("ABCDEF01"))
     }

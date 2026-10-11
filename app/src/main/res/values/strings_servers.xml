@@ -8,7 +8,7 @@
     <string name="servers_sign_in_title">Sign in to %1$s</string>
     <string name="servers_sign_in_subtitle">Enter your server address and the %1$s user to sign in with. Your password is only used to sign in.</string>
     <string name="servers_address">Server address</string>
-    <string name="servers_address_hint">http://192.168.1.10:8096</string>
+    <string name="servers_address_hint">https://192.168.1.10:8920</string>
     <string name="servers_username">Username</string>
     <string name="servers_password">Password</string>
     <string name="servers_connect">Connect</string>
@@ -62,6 +62,9 @@
 
     <string name="servers_failure_cert_untrusted">This server uses a certificate your device does not trust. Sign in again to review it.</string>
     <string name="servers_failure_cert_changed">The certificate of this server changed. Sign in again to review it.</string>
+    <string name="servers_plain_http_title">No secure connection</string>
+    <string name="servers_plain_http_message">%1$s does not offer HTTPS. Continuing sends your sign-in details over plain HTTP, which anyone on the network can read. Only continue on a network you trust.</string>
+    <string name="servers_plain_http_continue">Continue over HTTP</string>
     <string name="servers_cert_title">Trust this certificate?</string>
     <string name="servers_cert_body">%1$s uses a certificate your device does not trust. Only continue if you recognise this fingerprint. It is saved on this device for this server only.</string>
     <string name="servers_cert_changed_title">Certificate changed</string>

@@ -52,22 +52,36 @@ internal fun ServerSignInDialog(
     var password by remember { mutableStateOf("") }
     val provider = request.provider
     val canConnect = !state.connecting && address.isNotBlank() && username.isNotBlank()
-    val connect = {
-        if (canConnect) {
-            viewModel.connect(provider, address, username, password) { connection ->
-                password = ""
-                onConnected(connection)
-            }
+    val connectTo = { target: String ->
+        viewModel.connect(provider, target, username, password) { connection ->
+            password = ""
+            onConnected(connection)
         }
     }
-    val startQuickConnect = {
-        viewModel.startQuickConnect(provider, address) { connection -> onConnected(connection) }
+    val connect = { if (canConnect) connectTo(address) }
+    val quickConnectTo = { target: String ->
+        viewModel.startQuickConnect(provider, target) { connection -> onConnected(connection) }
     }
+    val startQuickConnect = { quickConnectTo(address) }
 
     LaunchedEffect(Unit) { viewModel.resetSignIn() }
     // Closing the dialog ends the Quick Connect poll.
     DisposableEffect(Unit) { onDispose { viewModel.stopQuickConnect() } }
 
+    val plainHttp = state.plainHttpAddress
+    if (plainHttp != null) {
+        PlainHttpPrompt(
+            httpAddress = plainHttp,
+            onContinue = {
+                // Only now, with the user's yes, is anything sent over http: retry exactly what hit the prompt.
+                val viaQuickConnect = state.quickConnect != null
+                address = plainHttp
+                if (viaQuickConnect) quickConnectTo(plainHttp) else connectTo(plainHttp)
+            },
+            onCancel = { viewModel.resetSignIn() }
+        )
+        return
+    }
     val certificate = state.certificate
     if (certificate != null) {
         CertificatePrompt(
@@ -217,6 +231,29 @@ private fun CertificatePrompt(
             SettingsDialogActionButton(
                 text = stringResource(if (changed) R.string.servers_cert_trust_new else R.string.servers_cert_trust),
                 onClick = onTrust,
+                primary = true
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlainHttpPrompt(
+    httpAddress: String,
+    onContinue: () -> Unit,
+    onCancel: () -> Unit
+) {
+    NuvioDialog(
+        onDismiss = onCancel,
+        title = stringResource(R.string.servers_plain_http_title),
+        subtitle = stringResource(R.string.servers_plain_http_message, httpAddress),
+        width = 720.dp
+    ) {
+        SettingsDialogActionRow {
+            SettingsDialogActionButton(text = stringResource(R.string.action_cancel), onClick = onCancel)
+            SettingsDialogActionButton(
+                text = stringResource(R.string.servers_plain_http_continue),
+                onClick = onContinue,
                 primary = true
             )
         }

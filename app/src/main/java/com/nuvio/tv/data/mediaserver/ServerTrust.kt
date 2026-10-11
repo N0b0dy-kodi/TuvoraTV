@@ -54,8 +54,11 @@ class ServerCertificateException(
  * handshake through [check] and enforces the answer; a refused handshake is remembered for
  * [takeCertificateError] so the failing request surfaces the prompt instead of "unreachable".
  */
-class ServerTrust(private val store: ServerTrustStore) {
-    private data class Refusal(val verdict: ServerCertTrustPolicy.Verdict, val fingerprint: String)
+class ServerTrust(
+    private val store: ServerTrustStore,
+    private val nowMs: () -> Long = System::currentTimeMillis
+) {
+    private data class Refusal(val verdict: ServerCertTrustPolicy.Verdict, val fingerprint: String, val atMs: Long)
 
     private val lock = Any()
     private val refusals = mutableMapOf<String, Refusal>()
@@ -69,20 +72,32 @@ class ServerTrust(private val store: ServerTrustStore) {
         val host = authority.substringBeforeLast(':')
         val verdict = ServerCertTrustPolicy.decide(systemTrusted, failure, fingerprint, store.pinned(authority), host)
         if (verdict is ServerCertTrustPolicy.Verdict.Accept) return true
-        synchronized(lock) { refusals[authority.lowercase()] = Refusal(verdict, fingerprint) }
+        synchronized(lock) { refusals[authority.lowercase()] = Refusal(verdict, fingerprint, nowMs()) }
         return false
     }
 
-    /** The prompt for the last refused handshake at [authority] (cleared by reading it); null when it is not trust-offerable. */
+    /**
+     * The prompt for the last refused handshake at [authority] (cleared by reading it); null when it is not trust-offerable.
+     * A refusal that cannot be offered (an expired certificate) stays recorded for [hasRefusal].
+     */
     fun takeCertificateError(authority: String): ServerCertificateException? {
-        val refusal = synchronized(lock) { refusals.remove(authority.lowercase()) } ?: return null
-        return when (val verdict = refusal.verdict) {
+        val key = authority.lowercase()
+        val refusal = synchronized(lock) { refusals[key] } ?: return null
+        val error = when (val verdict = refusal.verdict) {
             is ServerCertTrustPolicy.Verdict.AskTrustNew ->
                 ServerCertificateException(ServerFailure.CERTIFICATE_UNTRUSTED, authority, verdict.fingerprint, null)
             is ServerCertTrustPolicy.Verdict.AskCertificateChanged ->
                 ServerCertificateException(ServerFailure.CERTIFICATE_CHANGED, authority, verdict.presented, verdict.pinned)
-            else -> null
+            else -> return null
         }
+        synchronized(lock) { refusals.remove(key) }
+        return error
+    }
+
+    /** A recent refused handshake exists for [authority] (offerable for trust or not): the failing request died on the certificate, not the network. */
+    fun hasRefusal(authority: String): Boolean {
+        val refusal = synchronized(lock) { refusals[authority.lowercase()] } ?: return false
+        return nowMs() - refusal.atMs <= REFUSAL_WINDOW_MS
     }
 
     fun pinned(authority: String): String? = store.pinned(authority)
@@ -92,6 +107,8 @@ class ServerTrust(private val store: ServerTrustStore) {
 
     fun clearAll() = store.clearAll()
 }
+
+private const val REFUSAL_WINDOW_MS = 30_000L
 
 /** `AB:CD:EF` grouping of an upper-case hex SHA-256 for display. */
 fun formatFingerprint(hex: String): String = hex.chunked(2).joinToString(":")

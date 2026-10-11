@@ -5,8 +5,10 @@ import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
 import com.nuvio.tv.core.sync.SyncClientIdentity
 import com.nuvio.tv.data.local.ProfileDataStore
+import com.nuvio.tv.data.mediaserver.AndroidServerDeviceIdStore
 import com.nuvio.tv.data.mediaserver.AndroidServerPersistence
 import com.nuvio.tv.data.mediaserver.AndroidServerTrustStore
+import com.nuvio.tv.data.mediaserver.ServerDeviceId
 import com.nuvio.tv.data.mediaserver.ServerRepository
 import com.nuvio.tv.data.mediaserver.ServerTrust
 import com.nuvio.tv.data.mediaserver.emby.EmbyProvider
@@ -36,6 +38,7 @@ object MediaServerModule {
     @Singleton
     fun repository(
         persistence: AndroidServerPersistence,
+        deviceIdStore: AndroidServerDeviceIdStore,
         identity: SyncClientIdentity,
         profileDataStore: ProfileDataStore,
         trust: ServerTrust
@@ -45,10 +48,12 @@ object MediaServerModule {
             .readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(45, TimeUnit.SECONDS)
             .build()
+        // Chosen once: a device that already signed in keeps the id its tokens are bound to; a new one gets the Tuvora prefix.
+        val serverDeviceId = ServerDeviceId(deviceIdStore, identity::currentClientId, persistence::hasAny)
         val clientIdentity = ServerClientIdentity(
             device = Build.MODEL.orEmpty().ifBlank { "Android TV" },
             version = BuildConfig.VERSION_NAME,
-            deviceId = identity::currentClientId
+            deviceId = serverDeviceId::current
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val repository = ServerRepository(
