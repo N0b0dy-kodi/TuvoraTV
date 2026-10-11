@@ -21,40 +21,50 @@ import okhttp3.Request
 /** Pure request/response rules of the loopback relay. */
 internal object ServerRelayRequestPolicy {
     sealed interface Decision {
-        data class Serve(val headOnly: Boolean, val range: String?) : Decision
+        /** [path] (with query) starts with "/" and is served from the session's one authority. */
+        data class Serve(
+            val headOnly: Boolean,
+            val path: String,
+            val range: String? = null,
+            val conditional: Map<String, String> = emptyMap()
+        ) : Decision
         data class Reject(val status: Int) : Decision
     }
 
     private val RANGE = Regex("^bytes=\\d*-\\d*$")
-    private val NAME = Regex("^[A-Za-z0-9._-]{1,64}$")
+    private val CONDITIONAL = mapOf("if-range" to "If-Range", "if-none-match" to "If-None-Match", "if-modified-since" to "If-Modified-Since")
     private val ALLOWED_RESPONSE_HEADERS =
-        setOf("content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified")
+        setOf("content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified", "cache-control")
 
     fun newToken(random: SecureRandom = SecureRandom()): String {
         val bytes = ByteArray(16).also(random::nextBytes)
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    /** [headers] has lower-case names. */
+    /** [headers] has lower-case names. The target is `/<token>/<path on the pinned server>[?query]`. */
     fun decide(method: String, target: String, headers: Map<String, String>, token: String, port: Int): Decision {
         if (method != "GET" && method != "HEAD") return Decision.Reject(405)
         // A browser (or a page via DNS rebinding) must never be able to read the stream.
         if ("origin" in headers || "referer" in headers) return Decision.Reject(403)
         val host = headers["host"]?.lowercase() ?: return Decision.Reject(421)
         if (host != "127.0.0.1:$port" && host != "localhost:$port") return Decision.Reject(421)
-        if (target.contains('?') || target.contains('#')) return Decision.Reject(404)
-        val segments = target.removePrefix("/").split('/')
-        if (!target.startsWith("/") || segments.size > 2) return Decision.Reject(404)
-        val presented = segments[0]
+        if (!target.startsWith("/") || target.any { it.code < 0x21 || it.code == 0x7f }) return Decision.Reject(400)
+        if (target.contains('#') || target.contains('\\')) return Decision.Reject(404)
+        val firstSlash = target.indexOf('/', 1)
+        if (firstSlash < 0) return Decision.Reject(404)
+        val presented = target.substring(1, firstSlash)
         if (!MessageDigest.isEqual(presented.toByteArray(), token.toByteArray())) return Decision.Reject(404)
-        if (segments.size == 2 && !NAME.matches(segments[1])) return Decision.Reject(404)
+        val path = target.substring(firstSlash)
+        val pathOnly = path.substringBefore('?')
+        if (pathOnly.startsWith("//") || pathOnly.split('/').any { it == ".." }) return Decision.Reject(404)
         val range = headers["range"]?.takeIf { RANGE.matches(it) }
-        return Decision.Serve(headOnly = method == "HEAD", range = range)
+        val conditional = CONDITIONAL.mapNotNull { (lower, canonical) -> headers[lower]?.let { canonical to it } }.toMap()
+        return Decision.Serve(headOnly = method == "HEAD", path = path, range = range, conditional = conditional)
     }
 
-    /** The status given to the engine: playable statuses pass through, redirects and server errors become 502. */
+    /** The status given to the engine: playable statuses pass through (304 included), everything else becomes 502. */
     fun relayStatus(upstream: Int): Int = when (upstream) {
-        200, 206, 401, 403, 404, 416 -> upstream
+        200, 206, 304, 401, 403, 404, 416 -> upstream
         else -> 502
     }
 
@@ -66,19 +76,20 @@ internal object ServerRelayRequestPolicy {
  *
  * - binds 127.0.0.1 only, on an ephemeral port;
  * - one unguessable 128-bit token path per session ([ServerRelayRequestPolicy]);
- * - forwards ONLY to the one fixed https upstream URL given at [open], through the caller's pinned client
- *   (redirects off), adding that session's own headers; never an open proxy;
+ * - forwards ONLY to the one host:port given at [open], through the caller's pinned client (redirects off,
+ *   [RelayRedirectPolicy] decides each one), adding that session's own headers; never an open proxy;
+ * - HLS playlists (200, up to 2 MiB) get references to the pinned host rewritten back through the relay;
  * - supports Range, streams in 64 KiB pieces (no whole-file buffering), HEAD without a body;
  * - closed with the player ([close] stops listening and cancels in-flight upstream calls);
  * - logs nothing: no URL, header or token ever reaches a log.
  */
 class ServerLoopbackRelay private constructor(
     private val server: ServerSocket,
-    private val upstreamUrl: String,
+    private val authority: String,
     private val upstreamHeaders: Map<String, String>,
     private val client: OkHttpClient,
     private val token: String,
-    fileName: String?
+    initialPath: String
 ) : Closeable {
     private val port = server.localPort
     private val pool: ExecutorService = ThreadPoolExecutor(0, MAX_CONNECTIONS, 30, TimeUnit.SECONDS, SynchronousQueue())
@@ -90,8 +101,10 @@ class ServerLoopbackRelay private constructor(
 
     val isOpen: Boolean get() = open
 
-    /** What the engine plays. The optional file name only helps container sniffing. */
-    val url: String = "http://127.0.0.1:$port/$token" + (fileName?.takeIf { it.matches(Regex("^[A-Za-z0-9._-]{1,64}$")) }?.let { "/$it" } ?: "")
+    private val base = "http://127.0.0.1:$port/$token"
+
+    /** What the engine plays: the original path on the pinned server, behind the session token. */
+    val url: String = base + initialPath
 
     override fun toString(): String = "ServerLoopbackRelay(port=$port)"
 
@@ -134,17 +147,34 @@ class ServerLoopbackRelay private constructor(
     }
 
     private fun forward(decision: ServerRelayRequestPolicy.Decision.Serve, out: OutputStream) {
-        val builder = Request.Builder().url(upstreamUrl)
+        val builder = Request.Builder().url("https://$authority${decision.path}")
         upstreamHeaders.forEach { (name, value) -> builder.header(name, value) }
         decision.range?.let { builder.header("Range", it) }
+        decision.conditional.forEach { (name, value) -> builder.header(name, value) }
         builder.method(if (decision.headOnly) "HEAD" else "GET", null)
         val call = client.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(builder.build())
         calls += call
         try {
             call.execute().use { response ->
-                val status = ServerRelayRequestPolicy.relayStatus(response.code)
+                val code = response.code
+                if (RelayRedirectPolicy.isRedirect(code)) {
+                    // Back to the pinned server -> re-served through this session; a public https host -> the player
+                    // follows it itself and validates THAT host normally; anything else -> refused.
+                    when (val next = RelayRedirectPolicy.decide(code, response.header("Location"), authority)) {
+                        is RelayRedirectPolicy.Decision.ViaRelay -> redirectAnswer(out, code, "/$token${next.path}")
+                        is RelayRedirectPolicy.Decision.PassThrough -> redirectAnswer(out, code, next.location)
+                        RelayRedirectPolicy.Decision.Refuse -> respond(out, 502)
+                    }
+                    return@use
+                }
+                val status = ServerRelayRequestPolicy.relayStatus(code)
+                val contentType = response.header("Content-Type")
+                if (!decision.headOnly && status == 200 && HlsPlaylistRewriter.isPlaylist(contentType, decision.path)) {
+                    relayPlaylist(response.body?.source(), response, decision, out)
+                    return@use
+                }
                 val head = StringBuilder("HTTP/1.1 $status ${reason(status)}\r\n")
-                if (status == response.code) {
+                if (status == code) {
                     response.headers.forEach { (name, value) ->
                         if (ServerRelayRequestPolicy.isResponseHeaderAllowed(name) && !value.contains('\r') && !value.contains('\n')) {
                             head.append(name).append(": ").append(value).append("\r\n")
@@ -157,7 +187,7 @@ class ServerLoopbackRelay private constructor(
                 out.write(head.toString().toByteArray(Charsets.ISO_8859_1))
                 out.flush()
                 val body = response.body
-                if (!decision.headOnly && status == response.code && body != null) {
+                if (!decision.headOnly && status == code && status != 304 && body != null) {
                     val source = body.source()
                     val buffer = ByteArray(BUFFER_BYTES)
                     while (true) {
@@ -173,6 +203,45 @@ class ServerLoopbackRelay private constructor(
         } finally {
             calls -= call
         }
+    }
+
+    /** A bare redirect: Location and nothing else of ours or the server's. */
+    private fun redirectAnswer(out: OutputStream, status: Int, location: String) {
+        val text = "HTTP/1.1 $status ${reason(status)}\r\nLocation: $location\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        out.write(text.toByteArray(Charsets.ISO_8859_1))
+        out.flush()
+    }
+
+    /** Playlists only, status 200, buffered up to the cap (larger is refused, never streamed unrewritten). */
+    private fun relayPlaylist(
+        source: okio.BufferedSource?,
+        response: okhttp3.Response,
+        decision: ServerRelayRequestPolicy.Decision.Serve,
+        out: OutputStream
+    ) {
+        val buffer = okio.Buffer()
+        if (source != null) {
+            while (buffer.size <= HlsPlaylistRewriter.MAX_PLAYLIST_BYTES) {
+                if (source.read(buffer, 8192L) < 0) break
+            }
+        }
+        if (buffer.size > HlsPlaylistRewriter.MAX_PLAYLIST_BYTES) {
+            respond(out, 502)
+            return
+        }
+        val rewritten = HlsPlaylistRewriter.rewrite(buffer.readUtf8(), authority, base).toByteArray(Charsets.UTF_8)
+        val head = StringBuilder("HTTP/1.1 200 OK\r\n")
+        response.headers.forEach { (name, value) ->
+            if (ServerRelayRequestPolicy.isResponseHeaderAllowed(name) && !name.equals("Content-Length", true) &&
+                !name.equals("Content-Range", true) && !value.contains('\r') && !value.contains('\n')
+            ) {
+                head.append(name).append(": ").append(value).append("\r\n")
+            }
+        }
+        head.append("Content-Length: ").append(rewritten.size).append("\r\nConnection: close\r\n\r\n")
+        out.write(head.toString().toByteArray(Charsets.ISO_8859_1))
+        out.write(rewritten)
+        out.flush()
     }
 
     private fun respond(out: OutputStream, status: Int) {
@@ -219,8 +288,9 @@ class ServerLoopbackRelay private constructor(
     }
 
     private fun reason(status: Int) = when (status) {
-        200 -> "OK"; 206 -> "Partial Content"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 403 -> "Forbidden"
+        200 -> "OK"; 206 -> "Partial Content"; 302 -> "Found"; 304 -> "Not Modified"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 403 -> "Forbidden"
         404 -> "Not Found"; 405 -> "Method Not Allowed"; 416 -> "Range Not Satisfiable"; 421 -> "Misdirected Request"
+        301 -> "Moved Permanently"; 303 -> "See Other"; 307 -> "Temporary Redirect"; 308 -> "Permanent Redirect"
         else -> "Bad Gateway"
     }
 
@@ -231,14 +301,15 @@ class ServerLoopbackRelay private constructor(
         private const val BUFFER_BYTES = 64 * 1024
 
         /**
-         * @param upstreamUrl the one https URL this session may fetch;
+         * @param upstreamUrl the first https URL to play; the session may fetch only paths of ITS host:port;
          * @param headers the session's own request headers (auth), added upstream and never shown to the engine;
          * @param client the pinned client for exactly that URL's authority.
          */
-        fun open(upstreamUrl: String, headers: Map<String, String>, client: OkHttpClient, fileName: String?): ServerLoopbackRelay {
-            require(ServerMediaRoutePolicy.authorityOf(upstreamUrl) != null) { "only https server URLs are relayed" }
+        fun open(upstreamUrl: String, headers: Map<String, String>, client: OkHttpClient): ServerLoopbackRelay {
+            val authority = requireNotNull(ServerMediaRoutePolicy.authorityOf(upstreamUrl)) { "only https server URLs are relayed" }
+            val initialPath = "/" + upstreamUrl.substringAfter("://").substringAfter('/', "").substringBefore('#')
             val server = ServerSocket(0, 16, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)))
-            return ServerLoopbackRelay(server, upstreamUrl, headers.toMap(), client, ServerRelayRequestPolicy.newToken(), fileName)
+            return ServerLoopbackRelay(server, authority, headers.toMap(), client, ServerRelayRequestPolicy.newToken(), initialPath)
                 .also { it.start() }
         }
     }

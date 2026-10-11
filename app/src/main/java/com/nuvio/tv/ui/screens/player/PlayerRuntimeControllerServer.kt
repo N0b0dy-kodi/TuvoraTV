@@ -218,7 +218,7 @@ internal fun PlayerRuntimeController.mpvTargetFor(url: String, headers: Map<Stri
     val client = router.pinnedClient(url, PlayerPlaybackNetworking.strictPlaybackHttpClient)
     val relay = try {
         if (client == null) null
-        else com.nuvio.tv.data.mediaserver.ServerLoopbackRelay.open(url, headers, client, url.substringBefore('?').substringAfterLast('/'))
+        else com.nuvio.tv.data.mediaserver.ServerLoopbackRelay.open(url, headers, client)
     } catch (error: Exception) {
         null
     } ?: throw IllegalStateException(context.getString(R.string.servers_mpv_unsupported))

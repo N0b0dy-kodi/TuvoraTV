@@ -1,20 +1,11 @@
 package com.nuvio.tv.data.mediaserver
 
-import java.io.File
-import java.io.InputStream
+import java.io.IOException
 import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.net.Socket
-import java.nio.file.Files
-import java.security.KeyStore
-import java.security.MessageDigest
-import java.security.cert.X509Certificate
-import java.util.concurrent.TimeUnit
-import javax.net.ssl.KeyManagerFactory
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLServerSocket
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -23,18 +14,21 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import java.util.concurrent.TimeUnit
 import org.junit.Test
 
 /**
  * Proof against a REAL local HTTPS server with a freshly generated self-signed certificate (JDK keytool):
  * the pinned client reads images and ranges, a changed certificate is refused, other hosts stay validated,
- * and the loopback relay serves the same bytes to a plain-HTTP client (what mpv sees).
+ * and the loopback relay serves the same bytes (redirects and HLS included) to a plain-HTTP client.
  */
 class ServerPinnedTlsProofTest {
-    private val servers = mutableListOf<TestHttps>()
+    private val servers = mutableListOf<TestHttpsServer>()
     private val relays = mutableListOf<ServerLoopbackRelay>()
     private val video = ByteArray(300_000) { (it * 31 % 251).toByte() }
     private val image = ByteArray(2_048) { (it % 199).toByte() }
+    private val seen = mutableListOf<String>()
+    private val seenHeaders = mutableListOf<Map<String, String>>()
 
     @After
     fun tearDown() {
@@ -42,31 +36,18 @@ class ServerPinnedTlsProofTest {
         servers.forEach { it.stop() }
     }
 
-    private class Started(val server: TestHttps, val authority: String, val fingerprint: String, val port: Int)
-
-    private fun start(port: Int = 0, requests: MutableList<String>? = null): Started {
-        val dir = Files.createTempDirectory("tls-proof").toFile()
-        val store = File(dir, "k.p12")
-        val keytool = File(System.getProperty("java.home"), "bin/keytool").absolutePath
-        val process = ProcessBuilder(
-            keytool, "-genkeypair", "-alias", "s", "-keyalg", "RSA", "-keysize", "2048", "-validity", "30",
-            "-dname", "CN=media-test", "-storetype", "PKCS12", "-keystore", store.absolutePath,
-            "-storepass", "changeit", "-keypass", "changeit"
-        ).redirectErrorStream(true).start()
-        check(process.waitFor(60, TimeUnit.SECONDS) && process.exitValue() == 0) { "keytool failed" }
-        val keyStore = KeyStore.getInstance("PKCS12").apply { store.inputStream().use { load(it, "changeit".toCharArray()) } }
-        val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(keyStore, "changeit".toCharArray()) }
-        val ssl = SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, null) }
-        val server = TestHttps(ssl.serverSocketFactory.createServerSocket(port, 16, InetAddress.getByName("127.0.0.1")) as SSLServerSocket) { path, range ->
-            requests?.add(path)
-            val body = if (path.endsWith(".jpg")) image else video
-            Triple(if (path.endsWith(".jpg")) "image/jpeg" else "video/mp4", body, range)
+    private fun start(port: Int = 0, extra: (String, Int) -> TestReply? = { _, _ -> null }): TestHttpsServer {
+        lateinit var self: TestHttpsServer
+        self = TestHttpsServer(port) { path, headers ->
+            seen += path.substringBefore('?')
+            seenHeaders += headers
+            extra(path, self.port) ?: when {
+                path.endsWith(".jpg") -> rangeReply(image, "image/jpeg", headers["range"])
+                else -> rangeReply(video, "video/mp4", headers["range"])
+            }
         }
-        servers += server
-        val cert = keyStore.getCertificate("s") as X509Certificate
-        val fp = MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02X".format(it) }
-        val actualPort = server.port
-        return Started(server, "127.0.0.1:$actualPort", fp, actualPort)
+        servers += self
+        return self
     }
 
     private val base = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
@@ -75,6 +56,19 @@ class ServerPinnedTlsProofTest {
         val request = Request.Builder().url(url).apply { if (range != null) header("Range", range) }.build()
         return client.newCall(request).execute().use { it.code to it.body!!.bytes() }
     }
+
+    private fun pinned(s: TestHttpsServer): Pair<ServerTrust, OkHttpClient> {
+        val trust = ServerTrust(MemoryServerTrustStore())
+        trust.pin(s.authority, s.fingerprint)
+        return trust to ServerMediaRouter(trust).pinnedClient("https://${s.authority}/x", base)!!
+    }
+
+    private fun openRelay(s: TestHttpsServer, path: String = "/v.mp4"): ServerLoopbackRelay {
+        val (_, client) = pinned(s)
+        return ServerLoopbackRelay.open("https://${s.authority}$path", mapOf("Authorization" to "secret-session"), client).also { relays += it }
+    }
+
+    private val noFollow = OkHttpClient.Builder().followRedirects(false).build()
 
     @Test
     fun theSystemValidatedClientRefusesTheSelfSignedServer() {
@@ -90,12 +84,10 @@ class ServerPinnedTlsProofTest {
     fun anUnpinnedServerSurfacesItsFingerprintForTheUser() {
         val s = start()
         val trust = ServerTrust(MemoryServerTrustStore())
-        val client = base.withServerTrust(s.authority, trust)
-
         try {
-            fetch(client, "https://${s.authority}/a.jpg")
+            fetch(base.withServerTrust(s.authority, trust), "https://${s.authority}/a.jpg")
             fail("expected a refusal before the user accepts")
-        } catch (_: java.io.IOException) {
+        } catch (_: IOException) {
         }
         val prompt = trust.takeCertificateError(s.authority)!!
         assertEquals(ServerFailure.CERTIFICATE_UNTRUSTED, prompt.failure)
@@ -105,9 +97,7 @@ class ServerPinnedTlsProofTest {
     @Test
     fun aPinnedServerServesImagesAndRanges() {
         val s = start()
-        val trust = ServerTrust(MemoryServerTrustStore())
-        trust.pin(s.authority, s.fingerprint)
-        val client = ServerMediaRouter(trust).pinnedClient("https://${s.authority}/a.jpg", base)!!
+        val (_, client) = pinned(s)
 
         val (code, bytes) = fetch(client, "https://${s.authority}/a.jpg")
         assertEquals(200, code)
@@ -122,14 +112,12 @@ class ServerPinnedTlsProofTest {
         val first = start()
         val trust = ServerTrust(MemoryServerTrustStore())
         trust.pin(first.authority, first.fingerprint)
-        first.server.stop()
+        first.stop()
         val second = start(port = first.port) // same host:port, new certificate
-        val client = base.withServerTrust(second.authority, trust)
-
         try {
-            fetch(client, "https://${second.authority}/a.jpg")
+            fetch(base.withServerTrust(second.authority, trust), "https://${second.authority}/a.jpg")
             fail("a changed certificate must not be accepted silently")
-        } catch (_: java.io.IOException) {
+        } catch (_: IOException) {
         }
         val prompt = trust.takeCertificateError(second.authority)!!
         assertEquals(ServerFailure.CERTIFICATE_CHANGED, prompt.failure)
@@ -151,15 +139,11 @@ class ServerPinnedTlsProofTest {
 
     @Test
     fun theRelayStreamsTheSameBytesToAPlainHttpClient() {
-        val seen = mutableListOf<String>()
-        val s = start(requests = seen)
-        val trust = ServerTrust(MemoryServerTrustStore())
-        trust.pin(s.authority, s.fingerprint)
-        val pinned = ServerMediaRouter(trust).pinnedClient("https://${s.authority}/v.mp4", base)!!
-        val relay = ServerLoopbackRelay.open("https://${s.authority}/v.mp4", emptyMap(), pinned, "video.mp4")
-        relays += relay
+        val s = start()
+        val relay = openRelay(s)
 
         assertTrue("loopback only", relay.url.startsWith("http://127.0.0.1:"))
+        assertTrue("the player sees the original path", relay.url.endsWith("/v.mp4"))
         val plain = OkHttpClient()
         val (code, all) = fetch(plain, relay.url)
         assertEquals(200, code)
@@ -167,44 +151,94 @@ class ServerPinnedTlsProofTest {
         val (rangeCode, part) = fetch(plain, relay.url, "bytes=250000-")
         assertEquals(206, rangeCode)
         assertArrayEquals("tail range", video.copyOfRange(250_000, video.size), part)
-        assertEquals("the upstream saw the real path", listOf("/v.mp4", "/v.mp4"), seen)
+        assertTrue("the session auth header reached the server", seenHeaders.all { it["authorization"] == "secret-session" })
+        assertEquals(listOf("/v.mp4", "/v.mp4"), seen)
     }
 
     @Test
     fun theRelayRefusesAnythingButItsTokenPath() {
         val s = start()
-        val trust = ServerTrust(MemoryServerTrustStore())
-        trust.pin(s.authority, s.fingerprint)
-        val pinned = ServerMediaRouter(trust).pinnedClient("https://${s.authority}/v.mp4", base)!!
-        val relay = ServerLoopbackRelay.open("https://${s.authority}/v.mp4", emptyMap(), pinned, null)
-        relays += relay
+        val relay = openRelay(s)
         val port = relay.url.substringAfter("127.0.0.1:").substringBefore('/').toInt()
-        val plain = OkHttpClient()
 
-        val wrong = plain.newCall(Request.Builder().url("http://127.0.0.1:$port/not-the-token").build()).execute().use { it.code }
-        assertEquals(404, wrong)
-        val post = plain.newCall(
-            Request.Builder().url(relay.url).post(okhttp3.RequestBody.create(null, ByteArray(1))).build()
-        ).execute().use { it.code }
-        assertEquals(405, post)
-        val rebinding = plain.newCall(Request.Builder().url(relay.url).header("Host", "evil.example:$port").build()).execute().use { it.code }
-        assertEquals(421, rebinding)
+        assertEquals(404, noFollow.newCall(Request.Builder().url("http://127.0.0.1:$port/not-the-token/v.mp4").build()).execute().use { it.code })
+        assertEquals(405, noFollow.newCall(Request.Builder().url(relay.url).post(ByteArray(1).toRequestBody()).build()).execute().use { it.code })
+        assertEquals(421, noFollow.newCall(Request.Builder().url(relay.url).header("Host", "evil.example:$port").build()).execute().use { it.code })
+        assertTrue("nothing was fetched upstream for refused requests", seen.isEmpty())
+    }
+
+    @Test
+    fun aRedirectBackToThePinnedServerIsServedThroughTheRelay() {
+        val s = start { path, port ->
+            when (path) {
+                "/rel" -> TestReply(302, mapOf("Location" to "/v.mp4"))
+                "/abs" -> TestReply(301, mapOf("Location" to "https://127.0.0.1:$port/v.mp4"))
+                "/cdn" -> TestReply(307, mapOf("Location" to "https://cdn.example.com/dl/abc?t=1", "Set-Cookie" to "sid=1"))
+                "/private" -> TestReply(302, mapOf("Location" to "https://10.0.0.5/x"))
+                "/loopback" -> TestReply(302, mapOf("Location" to "https://127.0.0.1:1/x"))
+                "/http" -> TestReply(302, mapOf("Location" to "http://cdn.example.com/x"))
+                else -> null
+            }
+        }
+        val relay = openRelay(s, "/rel")
+        val tokenBase = relay.url.substringBeforeLast("/rel")
+        val token = relay.url.substringAfter("127.0.0.1:").substringAfter('/').substringBefore('/')
+
+        val rel = noFollow.newCall(Request.Builder().url(relay.url).build()).execute().use { it.code to it.header("Location") }
+        assertEquals("relative redirect stays in the session", 302 to "/$token/v.mp4", rel)
+        val (code, bytes) = fetch(OkHttpClient(), relay.url) // following it plays the file
+        assertEquals(200, code)
+        assertArrayEquals(video, bytes)
+        val abs = noFollow.newCall(Request.Builder().url("$tokenBase/abs").build()).execute().use { it.code to it.header("Location") }
+        assertTrue("absolute pinned redirect re-served via relay: $abs", abs.first == 301 && abs.second!!.endsWith("/v.mp4") && !abs.second!!.startsWith("http"))
+        val cdn = noFollow.newCall(Request.Builder().url("$tokenBase/cdn").build()).execute().use { Triple(it.code, it.header("Location"), it.header("Set-Cookie")) }
+        assertEquals("public https redirect passed through bare", Triple(307, "https://cdn.example.com/dl/abc?t=1", null), cdn)
+        for (blocked in listOf("/private", "/loopback", "/http")) {
+            assertEquals("refused: $blocked", 502, noFollow.newCall(Request.Builder().url("$tokenBase$blocked").build()).execute().use { it.code })
+        }
+    }
+
+    @Test
+    fun hlsPlaylistsGetPinnedReferencesRewrittenAndLengthRecomputed() {
+        val s = start { path, port ->
+            when (path) {
+                "/live.m3u8" -> TestReply(
+                    200, mapOf("Content-Type" to "application/vnd.apple.mpegurl"),
+                    ("#EXTM3U\n#EXTINF:6,\nhttps://127.0.0.1:$port/seg0.ts\n#EXTINF:6,\n/seg1.ts\nseg2.ts\nhttps://cdn.example.com/3.ts\n").toByteArray()
+                )
+                "/big.m3u8" -> TestReply(200, mapOf("Content-Type" to "application/x-mpegURL"), ByteArray(HlsPlaylistRewriter.MAX_PLAYLIST_BYTES + 10) { '#'.code.toByte() })
+                else -> null
+            }
+        }
+        val relay = openRelay(s, "/live.m3u8")
+        val tokenBase = relay.url.substringBeforeLast("/live.m3u8")
+
+        val response = noFollow.newCall(Request.Builder().url(relay.url).build()).execute()
+        val text = response.use {
+            assertEquals(200, it.code)
+            val body = it.body!!.string()
+            assertEquals("Content-Length is the rewritten size", body.toByteArray().size.toString(), it.header("Content-Length"))
+            body
+        }
+        assertEquals(
+            "#EXTM3U\n#EXTINF:6,\n$tokenBase/seg0.ts\n#EXTINF:6,\n$tokenBase/seg1.ts\nseg2.ts\nhttps://cdn.example.com/3.ts\n",
+            text
+        )
+        assertEquals("a playlist over the cap is refused, never streamed unrewritten", 502,
+            noFollow.newCall(Request.Builder().url("$tokenBase/big.m3u8").build()).execute().use { it.code })
     }
 
     @Test
     fun closingTheRelayStopsListening() {
         val s = start()
-        val trust = ServerTrust(MemoryServerTrustStore())
-        trust.pin(s.authority, s.fingerprint)
-        val pinned = ServerMediaRouter(trust).pinnedClient("https://${s.authority}/v.mp4", base)!!
-        val relay = ServerLoopbackRelay.open("https://${s.authority}/v.mp4", emptyMap(), pinned, null)
+        val relay = openRelay(s)
         val port = relay.url.substringAfter("127.0.0.1:").substringBefore('/').toInt()
 
         relay.close()
 
         val refused = try {
             Socket(InetAddress.getByName("127.0.0.1"), port).close(); false
-        } catch (_: java.io.IOException) {
+        } catch (_: IOException) {
             true
         }
         assertTrue("nothing listens after teardown", refused)
@@ -212,62 +246,11 @@ class ServerPinnedTlsProofTest {
     }
 
     @Test
-    fun theRelayRefusesToOpenForAnUnpinnedClientTarget() {
+    fun theRelayRefusesToOpenForAPlainHttpTarget() {
         try {
-            ServerLoopbackRelay.open("http://nas.lan:8096/v.mp4", emptyMap(), base, null)
+            ServerLoopbackRelay.open("http://nas.lan:8096/v.mp4", emptyMap(), base)
             fail("plain http targets are not relayed")
         } catch (_: IllegalArgumentException) {
         }
     }
-}
-
-/** A tiny range-capable HTTPS file server (raw SSL sockets; the JDK http server is not on the Android test classpath). */
-private class TestHttps(
-    private val socket: SSLServerSocket,
-    private val resolve: (path: String, range: String?) -> Triple<String, ByteArray, String?>
-) {
-    val port: Int = socket.localPort
-
-    init {
-        Thread {
-            while (!socket.isClosed) {
-                val client = try { socket.accept() } catch (_: java.io.IOException) { break }
-                Thread {
-                    try {
-                        client.use { c ->
-                            val reader = c.getInputStream().bufferedReader(Charsets.ISO_8859_1)
-                            val requestLine = reader.readLine() ?: return@use
-                            var range: String? = null
-                            while (true) {
-                                val line = reader.readLine() ?: break
-                                if (line.isEmpty()) break
-                                if (line.lowercase().startsWith("range:")) range = line.substringAfter(':').trim()
-                            }
-                            val path = requestLine.split(' ')[1]
-                            val (type, body, _) = resolve(path, range)
-                            val out = c.getOutputStream()
-                            val head: String
-                            val slice: ByteArray
-                            if (range != null && range!!.startsWith("bytes=")) {
-                                val (a, b) = range!!.removePrefix("bytes=").split("-")
-                                val start = a.toInt()
-                                val end = if (b.isEmpty()) body.size - 1 else b.toInt()
-                                slice = body.copyOfRange(start, end + 1)
-                                head = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes $start-$end/${body.size}\r\n"
-                            } else {
-                                slice = body
-                                head = "HTTP/1.1 200 OK\r\n"
-                            }
-                            out.write((head + "Content-Type: $type\r\nAccept-Ranges: bytes\r\nContent-Length: ${slice.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.ISO_8859_1))
-                            out.write(slice)
-                            out.flush()
-                        }
-                    } catch (_: Exception) {
-                    }
-                }.apply { isDaemon = true }.start()
-            }
-        }.apply { isDaemon = true }.start()
-    }
-
-    fun stop() = socket.close()
 }
