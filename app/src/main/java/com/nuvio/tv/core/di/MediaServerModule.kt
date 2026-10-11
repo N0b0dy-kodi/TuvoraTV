@@ -1,11 +1,15 @@
 package com.nuvio.tv.core.di
 
+import android.content.Context
 import android.os.Build
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.core.profile.ProfileScopedCredentialStore
 import com.nuvio.tv.core.sync.SyncClientIdentity
 import com.nuvio.tv.data.local.ProfileDataStore
+import com.nuvio.tv.data.mediaserver.AndroidLegacyImportMarker
+import com.nuvio.tv.data.mediaserver.AndroidLegacyMediaServerSource
 import com.nuvio.tv.data.mediaserver.AndroidServerDeviceIdStore
+import com.nuvio.tv.data.mediaserver.LegacyMediaServerMigration
 import com.nuvio.tv.data.mediaserver.AndroidServerPersistence
 import com.nuvio.tv.data.mediaserver.AndroidServerTrustStore
 import com.nuvio.tv.data.mediaserver.ServerDeviceId
@@ -17,6 +21,7 @@ import com.nuvio.tv.data.mediaserver.mediabrowser.ServerClientIdentity
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import java.util.concurrent.TimeUnit
@@ -37,12 +42,23 @@ object MediaServerModule {
     @Provides
     @Singleton
     fun repository(
+        @ApplicationContext context: Context,
         persistence: AndroidServerPersistence,
         deviceIdStore: AndroidServerDeviceIdStore,
+        trustStore: AndroidServerTrustStore,
         identity: SyncClientIdentity,
         profileDataStore: ProfileDataStore,
         trust: ServerTrust
     ): ServerRepository {
+        // Once, before anything reads the store: the servers the previously released fork stack saved on this device.
+        val migration = LegacyMediaServerMigration(
+            source = AndroidLegacyMediaServerSource(context),
+            persistence = persistence,
+            trust = trustStore,
+            deviceIds = deviceIdStore,
+            marker = AndroidLegacyImportMarker(context)
+        ).runOnce()
+        android.util.Log.i("MediaServerMigration", migration.toString())
         val http = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)

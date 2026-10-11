@@ -21,7 +21,9 @@ data class StoredServers(
     val connections: List<ServerConnection> = emptyList(),
     val tokens: Map<String, String> = emptyMap(),
     val pendingPush: Boolean = false,
-    val syncedKeys: List<String>? = null
+    val syncedKeys: List<String>? = null,
+    /** Set by the legacy import: the libraries of these servers are fetched once on load (the old stack's selection does not map). */
+    val libraryRefreshPending: Boolean = false
 ) {
     override fun toString(): String = "StoredServers(connections=${connections.size})"
 }

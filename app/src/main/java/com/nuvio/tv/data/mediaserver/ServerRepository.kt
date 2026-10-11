@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +51,7 @@ class ServerRepository(
     private var tokens = emptyMap<String, String>()
     private var pendingPush = false
     private var syncedKeys: Set<String>? = null
+    private var libraryRefreshPending = false
     private var localVersion = 0L
     private val mutableLocalChanges = MutableSharedFlow<Int>(extraBufferCapacity = 8)
     val localChanges: SharedFlow<Int> = mutableLocalChanges.asSharedFlow()
@@ -312,6 +314,7 @@ class ServerRepository(
         synchronized(lock) { tokens = stored.tokens }
         pendingPush = stored.pendingPush
         syncedKeys = stored.syncedKeys?.toSet()
+        libraryRefreshPending = stored.libraryRefreshPending
         loadedProfileId = profileId
         mutableState.value = ServersUiState(
             connections = stored.connections,
@@ -321,6 +324,32 @@ class ServerRepository(
                 .associate { it.id to ServerFailure.AUTH_REQUIRED },
             revision = mutableState.value.revision + 1
         )
+        if (libraryRefreshPending) scheduleLibraryRefresh(profileId)
+    }
+
+    /**
+     * Servers imported from the old fork stack have no libraries yet: fetch them once (the sign-in screen does this for a
+     * new server). One pass per load, never a loop; a server that cannot be reached keeps "Refresh libraries".
+     */
+    private fun scheduleLibraryRefresh(profileId: Int) {
+        val ids = mutableState.value.connections
+            .filter { synchronized(lock) { tokens[it.credentialRef] }.orEmpty().isNotBlank() }
+            .map { it.id }
+        scope.launch {
+            ids.forEach { id ->
+                try {
+                    refreshLibraries(id)
+                } catch (error: CancellationException) {
+                    if (!isActive) throw error
+                } catch (_: Exception) {
+                    // Left for the user's "Refresh libraries".
+                }
+            }
+            if (loadedProfileId == profileId) {
+                libraryRefreshPending = false
+                persist(mutableState.value.connections, synchronized(lock) { tokens })
+            }
+        }
     }
 
     private fun updateConnection(connectionId: String, transform: (ServerConnection) -> ServerConnection) {
@@ -345,7 +374,7 @@ class ServerRepository(
 
     private fun persist(connections: List<ServerConnection>, currentTokens: Map<String, String>) {
         val profileId = loadedProfileId ?: return
-        val stored = StoredServers(connections, currentTokens, pendingPush, syncedKeys?.toList())
+        val stored = StoredServers(connections, currentTokens, pendingPush, syncedKeys?.toList(), libraryRefreshPending)
         runCatching {
             persistence.write(profileId, json.encodeToString(StoredServers.serializer(), stored))
         }.onFailure { Log.w(TAG, "Unable to save server connections", it) }
