@@ -181,7 +181,6 @@ fun SettingsScreen(
     onNavigateToLicensesAttributions: () -> Unit = {},
     onNavigateToIptvPairing: () -> Unit = {},
     onNavigateToIptvSetupCode: () -> Unit = {},
-    onNavigateToMediaServers: () -> Unit = {},
     profileViewModel: ProfileSettingsViewModel = hiltViewModel(),
     experienceModeViewModel: ExperienceModeSettingsViewModel = hiltViewModel()
 ) {
@@ -648,8 +647,7 @@ fun SettingsScreen(
                                 onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                                 onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
                                 onNavigateToIptvPairing = onNavigateToIptvPairing,
-                                onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
-                                onNavigateToMediaServers = onNavigateToMediaServers
+                                onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
                             )
                         }
                     }
@@ -791,8 +789,7 @@ fun SettingsScreen(
                         onNavigateToSupportersContributors = onNavigateToSupportersContributors,
                         onNavigateToLicensesAttributions = onNavigateToLicensesAttributions,
                         onNavigateToIptvPairing = onNavigateToIptvPairing,
-                        onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
-                        onNavigateToMediaServers = onNavigateToMediaServers
+                        onNavigateToIptvSetupCode = onNavigateToIptvSetupCode
                     )
                 }
             }
@@ -824,7 +821,6 @@ private fun SettingsDetailPane(
     onNavigateToLicensesAttributions: () -> Unit,
     onNavigateToIptvPairing: () -> Unit,
     onNavigateToIptvSetupCode: () -> Unit,
-    onNavigateToMediaServers: () -> Unit
 ) {
     when (selectedCategory) {
         SettingsCategory.EXPERIENCE -> EssentialAdvancedSettingsContent(
@@ -910,7 +906,6 @@ private fun SettingsDetailPane(
             iptvFocusRequester = integrationIptvFocusRequester,
             onNavigateToIptvPairing = onNavigateToIptvPairing,
             onNavigateToIptvSetupCode = onNavigateToIptvSetupCode,
-            onNavigateToMediaServers = onNavigateToMediaServers,
             autoFocusEnabled = allowDetailAutofocus
         )
         SettingsCategory.ABOUT -> AboutSettingsContent(
@@ -1051,7 +1046,6 @@ private fun IntegrationSettingsContent(
     iptvFocusRequester: FocusRequester,
     onNavigateToIptvPairing: () -> Unit,
     onNavigateToIptvSetupCode: () -> Unit,
-    onNavigateToMediaServers: () -> Unit,
     autoFocusEnabled: Boolean
 ) {
     // Store builds compile Debrid out: its hub row is not rendered, and a stale Debrid selection
