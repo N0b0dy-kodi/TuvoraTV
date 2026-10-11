@@ -39,6 +39,14 @@ object NuvioExoPlayerPerformanceHelper {
             applyEngineConfig(newValue)
         }
 
+    private val extraLanePools: List<okhttp3.ConnectionPool> = List(HttpLanes.MAX_LANES - 1) {
+        okhttp3.ConnectionPool(NUVIO_LANE_POOL_MAX_IDLE, 3, java.util.concurrent.TimeUnit.MINUTES)
+    }
+
+    /** Pool for HTTP/2 lane [index]; lane 0 is [sharedConnectionPool]. */
+    fun lanePool(index: Int): okhttp3.ConnectionPool =
+        if (index == 0) sharedConnectionPool else extraLanePools[index - 1]
+
     @Volatile
     var sharedConnectionPool: okhttp3.ConnectionPool = okhttp3.ConnectionPool(
         DEFAULT_NUVIO_CONNECTION_POOL_SIZE,
@@ -48,6 +56,7 @@ object NuvioExoPlayerPerformanceHelper {
         private set
 
     // ─── Constants ────────────────────────────────────────────────────────────
+    const val NUVIO_LANE_POOL_MAX_IDLE = 8
     const val DEFAULT_NUVIO_ALLOCATOR_SEGMENT_SIZE = 64 * 1024        // 64 KB
     const val DEFAULT_NUVIO_TARGET_BUFFER_BYTES = 250 * 1024 * 1024    // 250 MB
     const val DEFAULT_NUVIO_MIN_BUFFER_MS = 40_000

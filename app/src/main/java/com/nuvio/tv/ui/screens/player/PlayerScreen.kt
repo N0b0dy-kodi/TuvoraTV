@@ -1112,7 +1112,7 @@ fun PlayerScreen(
                     val completed = timeline.duration > 0L &&
                         (timeline.currentPosition.toFloat() / timeline.duration.toFloat()) >= WatchProgress.COMPLETED_THRESHOLD
                     onBackPress(uiState.currentVideoId, uiState.currentSeason, uiState.currentEpisode, autoPlayEnabledForBack, completed)
-                },
+                }.takeIf { ExternalPlayerAvailability.canOpen(uiState.isServerStream) },
                 onShowStreamInfo = {
                     restoreStreamInfoFocus = true
                     viewModel.onEvent(PlayerEvent.OnShowStreamInfo)
@@ -1837,7 +1837,7 @@ private fun PlayerControlsOverlay(
     onSwitchPlayerEngine: () -> Unit,
     onReportPlaybackIssue: () -> Unit,
     onToggleMoreActions: () -> Unit,
-    onOpenInExternalPlayer: () -> Unit,
+    onOpenInExternalPlayer: (() -> Unit)?,
     onShowStreamInfo: () -> Unit,
     onResetHideTimer: () -> Unit,
     onHideControls: () -> Unit,
@@ -2125,16 +2125,18 @@ private fun PlayerControlsOverlay(
                                 onDownKey = onHideControls,
                                 onFocused = onResetHideTimer
                             )
-                            ControlButton(
-                                icon = Icons.AutoMirrored.Filled.OpenInNew,
-                                contentDescription = stringResource(R.string.cd_open_external_player),
-                                onClick = {
-                                    onOpenInExternalPlayer()
-                                },
-                                upFocusRequester = progressBarFocusRequester,
-                                onDownKey = onHideControls,
-                                onFocused = onResetHideTimer
-                            )
+                            onOpenInExternalPlayer?.let { openInExternalPlayer ->
+                                ControlButton(
+                                    icon = Icons.AutoMirrored.Filled.OpenInNew,
+                                    contentDescription = stringResource(R.string.cd_open_external_player),
+                                    onClick = {
+                                        openInExternalPlayer()
+                                    },
+                                    upFocusRequester = progressBarFocusRequester,
+                                    onDownKey = onHideControls,
+                                    onFocused = onResetHideTimer
+                                )
+                            }
                             ControlButton(
                                 icon = Icons.Default.Info,
                                 contentDescription = stringResource(R.string.cd_stream_info),

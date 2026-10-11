@@ -73,6 +73,25 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             .build()
     }
 
+    private val chunkSessionLanes = java.util.concurrent.ConcurrentHashMap<Pair<okhttp3.OkHttpClient, Int>, okhttp3.Call.Factory>()
+
+    /**
+     * With HTTP/2 on, every parallel range request would multiplex onto ONE connection and share its receive
+     * window (a 4K remux fell to ~49 Mbit/s on a Fire TV). One lane (own connection pool) per connection keeps
+     * them apart; lane 0 keeps the shared pool so a warmed connection is reused. HTTP/1.1, plain http and
+     * single-connection sessions keep the plain client (upstream c52797cd8).
+     */
+    private fun chunkSessionCallFactory(client: okhttp3.OkHttpClient, connections: Int, url: String): okhttp3.Call.Factory {
+        if (url.startsWith("http://", ignoreCase = true)) return client
+        val factory = chunkSessionLanes.getOrPut(client to connections) {
+            HttpLanes.callFactory(client, connections, NuvioExoPlayerPerformanceHelper::lanePool).also { created ->
+                if (created is LaneCallFactory) Log.i("PlayerMediaSourceFactory", "HTTP2_LANES lanes=${created.lanes.size}")
+            }
+        }
+        (factory as? LaneCallFactory)?.restart()
+        return factory
+    }
+
     fun configureSubtitleParsing(
         extractorsFactory: ExtractorsFactory?,
         subtitleParserFactory: SubtitleParser.Factory?
@@ -144,7 +163,7 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 else NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(routed.newBuilder()).build()
             }
             val chunkClient = playbackDns?.let { chunkBase.newBuilder().dns(it).build() } ?: chunkBase
-            val okHttpFactory = OkHttpDataSource.Factory(chunkClient).apply {
+            val okHttpFactory = OkHttpDataSource.Factory(chunkSessionCallFactory(chunkClient, if (mp4SessionMode) 1 else parallelConnectionCount, url)).apply {
                 setDefaultRequestProperties(sanitizedHeaders)
                 setUserAgent(DEFAULT_USER_AGENT)
             }
