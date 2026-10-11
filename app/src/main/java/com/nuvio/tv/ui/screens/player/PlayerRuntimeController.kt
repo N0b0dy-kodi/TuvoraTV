@@ -218,6 +218,8 @@ class PlayerRuntimeController(
     internal var currentAudioBitrate: Int? = null
     internal var currentStreamUrl: String
     internal var reportedServerUrl: String? = null
+    /** The loopback relay feeding mpv for a pinned self-signed media server (null otherwise); closed with the player. */
+    internal var serverRelay: com.nuvio.tv.data.mediaserver.ServerLoopbackRelay? = null
     internal var serverAudioChosenByUser = false
     /** The stream URL an audio_output_profile diagnostic was already emitted for — one per stream. */
     @Volatile internal var audioProfileEmittedStreamUrl: String? = null
@@ -698,6 +700,7 @@ class PlayerRuntimeController(
 
     fun onCleared() {
         stopServerPlayback()
+        closeServerRelay()
         releasePlayer()
         stopTorrentStream()
         torrentService.shutdown()

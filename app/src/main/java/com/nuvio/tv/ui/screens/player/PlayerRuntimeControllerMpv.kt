@@ -35,7 +35,14 @@ internal fun PlayerRuntimeController.attachMpvView(view: MpvSurface?) {
         // hwdec property resolve through it.
         view.directLiveRenderPath = isLiveFeed()
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
-        view.setMedia(currentStreamUrl, currentHeaders)
+        val (mpvUrl, mpvHeaders) = try {
+            mpvTargetFor(currentStreamUrl, currentHeaders)
+        } catch (error: IllegalStateException) {
+            // Never a silent failure: say why this server cannot play on this engine.
+            _uiState.update { it.copy(error = error.message, showLoadingOverlay = false, isBuffering = false) }
+            return@runCatching
+        }
+        view.setMedia(mpvUrl, mpvHeaders)
         view.setPlaybackSpeed(_uiState.value.playbackSpeed)
         view.applyAudioAmplificationDb(_uiState.value.audioAmplificationDb)
         view.applyAudioLanguagePreferences(mpvPreferredAudioLanguages)
@@ -136,7 +143,8 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
         view.applyHardwareDecodeMode(mpvHardwareDecodeModeSetting)
         val initialResumePosition = resolvePendingInitialResumePosition()
         playbackAnalyticsDiagnostics.setStartupStartPosition(initialResumePosition)
-        view.setMedia(url, headers, initialResumePosition)
+        val (mpvUrl, mpvHeaders) = mpvTargetFor(url, headers)
+        view.setMedia(mpvUrl, mpvHeaders, initialResumePosition)
         playbackAnalyticsDiagnostics.recordRawEventLine(
             "PLAYER_INIT: engine=MPV host=${url.safeMpvTraceHost()} " +
                 "playbackSpeed=${_uiState.value.playbackSpeed} resumePositionMs=$initialResumePosition"
@@ -204,6 +212,7 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
 
 internal fun PlayerRuntimeController.releaseMpvPlayer() {
     runCatching { mpvView?.releasePlayer() }
+    closeServerRelay()
 }
 
 private fun String.safeMpvTraceHost(): String {

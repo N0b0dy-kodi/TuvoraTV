@@ -80,6 +80,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var xtreamIptvSearchProvider: com.nuvio.tv.core.iptv.XtreamIptvSearchProvider
     @Inject lateinit var serverUserStateProjection: ServerUserStateProjection
     @Inject lateinit var serverMatcher: ServerMatcher
+    @Inject lateinit var serverTrust: com.nuvio.tv.data.mediaserver.ServerTrust
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -123,6 +124,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
 
     override fun onCreate() {
         super.onCreate()
+        com.nuvio.tv.data.mediaserver.ServerMediaRouting.router = com.nuvio.tv.data.mediaserver.ServerMediaRouter(serverTrust)
         // Own sources register into the plural source ports (id predicates, search) before anything asks.
         com.nuvio.tv.core.iptv.IptvSourceRegistrations.register(xtreamIptvSearchProvider)
         // Resolve the memory tier once, before anything sizes a cache from it.
@@ -250,7 +252,7 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     }
 
     override fun newImageLoader(context: android.content.Context): ImageLoader {
-        val imageOkHttpClient by lazy {
+        val imageBaseClient by lazy {
             val imageDispatcher = okhttp3.Dispatcher().apply {
                 maxRequests = 32
                 maxRequestsPerHost = 16
@@ -273,6 +275,19 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
                 .followRedirects(true)
                 .followSslRedirects(true)
                 .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("IMG"))
+                .build()
+        }
+        // A media-server host the user pinned (self-signed, trust on first use) is fetched through a client
+        // that trusts exactly that pin; every other host keeps normal validation. Derived from the base client,
+        // so the dispatcher, timeouts and trace interceptor carry over; revalidation shares this client.
+        val imageOkHttpClient by lazy {
+            imageBaseClient.newBuilder()
+                .addInterceptor { chain ->
+                    val request = chain.request()
+                    val pinned = com.nuvio.tv.data.mediaserver.ServerMediaRouting.router
+                        ?.pinnedClient(request.url.toString(), imageBaseClient)
+                    if (pinned != null) pinned.newCall(request).execute() else chain.proceed(request)
+                }
                 .build()
         }
 

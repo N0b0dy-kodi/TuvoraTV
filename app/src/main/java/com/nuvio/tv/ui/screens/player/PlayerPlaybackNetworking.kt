@@ -68,6 +68,25 @@ internal object PlayerPlaybackNetworking {
      * occurs on self-signed local media servers.
      */
     internal val playbackHttpClient: OkHttpClient by lazy {
+        strictPlaybackHttpClient.newBuilder()
+            .addInterceptor { chain ->
+                val request = chain.request()
+                try {
+                    chain.proceed(request)
+                } catch (e: SSLException) {
+                    // Fallback to trust-all client if standard system SSL fails (e.g. self-signed local server)
+                    trustAllPlaybackHttpClient.newCall(request).execute()
+                }
+            }
+            .build()
+    }
+
+    /**
+     * The same client WITHOUT the trust-all fallback. A media-server host the user pinned (trust on first
+     * use) is reached through a client derived from this one, so a changed certificate is refused rather
+     * than silently accepted by the fallback.
+     */
+    internal val strictPlaybackHttpClient: OkHttpClient by lazy {
         val dispatcher = okhttp3.Dispatcher().apply {
             maxRequests = 64
             maxRequestsPerHost = 32
@@ -81,25 +100,22 @@ internal object PlayerPlaybackNetworking {
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
-            .addInterceptor { chain ->
-                val request = chain.request()
-                try {
-                    chain.proceed(request)
-                } catch (e: SSLException) {
-                    // Fallback to trust-all client if standard system SSL fails (e.g. self-signed local server)
-                    trustAllPlaybackHttpClient.newCall(request).execute()
-                }
-            }
             .build()
     }
+
+    /** The playback client for [url]: the pinned-certificate client for a pinned media-server host, else the normal one. */
+    internal fun clientFor(url: String?): OkHttpClient =
+        url?.let { com.nuvio.tv.data.mediaserver.ServerMediaRouting.router?.pinnedClient(it, strictPlaybackHttpClient) }
+            ?: playbackHttpClient
 
     @OptIn(UnstableApi::class)
     fun createHttpDataSourceFactory(
         defaultHeaders: Map<String, String> = emptyMap(),
         dns: Dns? = null,
-        useLongReadTimeout: Boolean = false
+        useLongReadTimeout: Boolean = false,
+        url: String? = null
     ): DataSource.Factory {
-        val builder = playbackHttpClient.newBuilder()
+        val builder = clientFor(url).newBuilder()
         if (useLongReadTimeout) {
             builder.readTimeout(LOOPBACK_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         }
@@ -144,11 +160,12 @@ internal object PlayerPlaybackNetworking {
         context: android.content.Context,
         defaultHeaders: Map<String, String> = emptyMap(),
         dns: Dns? = null,
-        useLongReadTimeout: Boolean = false
+        useLongReadTimeout: Boolean = false,
+        url: String? = null
     ): DataSource.Factory {
         // DefaultDataSource keeps file/content/rtmp/udp/asset URIs working; only http(s) uses the
         // OkHttp (optionally DoH-resolved) upstream.
-        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns, useLongReadTimeout))
+        return DefaultDataSource.Factory(context, createHttpDataSourceFactory(defaultHeaders, dns, useLongReadTimeout, url))
     }
 
     fun openConnection(

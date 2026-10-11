@@ -97,7 +97,8 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
             context,
             sanitizedHeaders,
             playbackDns,
-            useLongReadTimeout = isLoopbackUrl(url)
+            useLongReadTimeout = isLoopbackUrl(url),
+            url = url
         )
 
         val resolvedMimeType = mimeTypeOverride
@@ -137,7 +138,12 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 )
             }
             // Fork: apply the per-playlist DoH resolver to the chunk-session client too (shares the pool).
-            val chunkClient = playbackDns?.let { playbackHttpClient.newBuilder().dns(it).build() } ?: playbackHttpClient
+            // A pinned media-server host gets its pinned-certificate client (never the trust-all fallback).
+            val chunkBase = PlayerPlaybackNetworking.clientFor(url).let { routed ->
+                if (routed === PlayerPlaybackNetworking.playbackHttpClient) playbackHttpClient
+                else NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(routed.newBuilder()).build()
+            }
+            val chunkClient = playbackDns?.let { chunkBase.newBuilder().dns(it).build() } ?: chunkBase
             val okHttpFactory = OkHttpDataSource.Factory(chunkClient).apply {
                 setDefaultRequestProperties(sanitizedHeaders)
                 setUserAgent(DEFAULT_USER_AGENT)

@@ -82,4 +82,5 @@
     <string name="servers_qc_failed">Quick Connect could not finish. Check the connection and try again.</string>
     <string name="servers_qc_retry">Try again</string>
     <string name="servers_qc_use_password">Use password instead</string>
+    <string name="servers_mpv_unsupported">This server uses a certificate you trusted, which this player cannot use directly. Try the other player in the player settings.</string>
 </resources>
