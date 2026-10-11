@@ -9,7 +9,7 @@ package com.nuvio.tv.playback.core
  * fullscreen so a guide->fullscreen promote still applies in place (no rebuild).
  *  - Media3: min = target, max = 2x target, start = a short fixed threshold (zapping stays fast),
  *    after-rebuffer = target capped at 10 s.
- *  - libmpv: readahead from the max buffer (MpvAdapterPlan), plus `cache-pause-wait` = the
+ *  - libmpv: cache-secs and readahead from the chosen target, capped by device memory (MpvAdapterPlan), plus `cache-pause-wait` = the
  *    after-rebuffer cushion (mpv's default is 1 s — the knob a stuttering provider needs).
  */
 object LiveBufferPolicy {

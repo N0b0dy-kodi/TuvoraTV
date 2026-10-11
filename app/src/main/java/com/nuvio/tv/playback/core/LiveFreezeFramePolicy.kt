@@ -5,8 +5,8 @@ package com.nuvio.tv.playback.core
  *
  * A reconnect or handoff tears the engine and its surface down, mpv blanks its output when a stream
  * ends, and Amlogic can blank the video plane when a decoder is released — so keeping the surface
- * alone cannot guarantee a picture. The host keeps a recent copy of the frame while video is really
- * playing and shows it whenever the picture is interrupted, until a new frame is drawn.
+ * alone cannot guarantee a picture. The host copies the outgoing frame at an interruption boundary
+ * and holds it until a new frame is drawn. Periodic surface readback can stall hardware decoders.
  */
 object LiveFreezeFramePolicy {
     enum class Overlay {

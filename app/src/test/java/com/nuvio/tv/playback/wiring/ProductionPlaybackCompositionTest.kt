@@ -55,6 +55,7 @@ class ProductionPlaybackCompositionTest {
         val requestedProfiles = mutableListOf<PlaybackProfileId>()
         val factory = ProductionPlaybackSessionFactory(
             context = context,
+            playerMemoryBudget = com.nuvio.tv.core.memory.AndroidPlayerMemoryBudget(context),
             providerResolverFactory = ProviderPlaybackResolverFactory { profileId ->
                 requestedProfiles += profileId
                 ProviderPlaybackResolver { _, _ -> error("No provider resolution during construction") }

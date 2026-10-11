@@ -33,6 +33,8 @@ class MpvEngine internal constructor(
     private val scope: CoroutineScope,
     private val surfaceHost: MpvSurfaceHost,
     private val backendFactory: MpvBackendFactory,
+    private val demuxerBudget: com.nuvio.tv.core.contracts.DemuxerBudgetBytes =
+        com.nuvio.tv.core.contracts.DemuxerBudgetBytes(64L * 1024 * 1024, 32L * 1024 * 1024),
 ) : PlaybackEngine {
     override val type: EngineType = EngineType.LIBMPV
     private val lock = Mutex()
@@ -97,6 +99,7 @@ class MpvEngine internal constructor(
     override suspend fun detachSurface(generation: Long): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.SURFACE_ATTACHMENT)
         backend?.let {
+            if (!sourceReleased) lease?.freezeForTransition()
             val detached = it.detachSurface()
             if (detached is PlaybackResult.Failure) return@withLock detached
         }
@@ -109,7 +112,7 @@ class MpvEngine internal constructor(
     override suspend fun start(input: PlaybackEngineStart): PlaybackResult<Unit> = lock.withLock {
         if (generation != input.generation) return@withLock stale(FailurePhase.ENGINE_START)
         val currentLease = lease ?: return@withLock failure(FailurePhase.SURFACE_ATTACHMENT, FailureCode.SURFACE_LOST)
-        val plan = when (val planned = MpvAdapterPlanFactory.create(input)) {
+        val plan = when (val planned = MpvAdapterPlanFactory.create(input, demuxerBudget)) {
             is PlaybackResult.Failure -> return@withLock planned
             is PlaybackResult.Success -> planned.value
         }
@@ -117,7 +120,7 @@ class MpvEngine internal constructor(
         if (retained != null) {
             val previous = activeStart
             val previousPlan = previous?.let {
-                when (val planned = MpvAdapterPlanFactory.create(it)) {
+                when (val planned = MpvAdapterPlanFactory.create(it, demuxerBudget)) {
                     is PlaybackResult.Success -> planned.value
                     is PlaybackResult.Failure -> null
                 }
@@ -250,7 +253,7 @@ class MpvEngine internal constructor(
         val current = backend ?: return@withLock failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
         val previous = activeStart ?: return@withLock failure(FailurePhase.PLAYBACK, FailureCode.UNKNOWN)
         val updated = previous.copy(requirements = requirements)
-        val plan = when (val planned = MpvAdapterPlanFactory.create(updated)) {
+        val plan = when (val planned = MpvAdapterPlanFactory.create(updated, demuxerBudget)) {
             is PlaybackResult.Failure -> return@withLock planned
             is PlaybackResult.Success -> planned.value
         }
@@ -288,6 +291,7 @@ class MpvEngine internal constructor(
     override suspend fun releaseSource(generation: Long): PlaybackResult<Unit> = lock.withLock {
         if (this.generation != generation) return@withLock stale(FailurePhase.RELEASE)
         val current = backend ?: return@withLock PlaybackResult.Success(Unit)
+        if (!sourceReleased) lease?.freezeForTransition()
         when (val stopped = current.stopSource()) {
             is PlaybackResult.Failure -> stopped
             is PlaybackResult.Success -> {
@@ -306,6 +310,7 @@ class MpvEngine internal constructor(
         val currentGeneration = this.generation
         if (currentGeneration != null && currentGeneration != generation) return@withLock stale(FailurePhase.RELEASE)
         backend?.let { current ->
+            if (!hard && !sourceReleased) lease?.freezeForTransition()
             val result = if (hard) current.hardAbort() else current.release()
             if (result is PlaybackResult.Failure) return@withLock result
         }

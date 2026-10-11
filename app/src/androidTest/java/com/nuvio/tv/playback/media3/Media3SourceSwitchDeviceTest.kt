@@ -36,7 +36,8 @@ class Media3SourceSwitchDeviceTest {
         reader.setOnImageAvailableListener({ r -> r.acquireLatestImage()?.close() }, Handler(Looper.getMainLooper()))
         val lease = OffscreenLease(reader.surface)
         var created = 0
-        val factory = AndroidMedia3BackendFactory(target, OkHttpClient())
+        val factory = AndroidMedia3BackendFactory(target, OkHttpClient(),
+            playerMemoryBudget = com.nuvio.tv.core.memory.AndroidPlayerMemoryBudget(target))
         val engine = Media3Engine(scope, Media3SurfaceHost { _, _ -> PlaybackResult.Success(lease) },
             Media3BackendFactory { plan -> created++; factory.create(plan) })
         val graph = PlaybackGraph("media3-device", EngineType.MEDIA3, GraphOutputProfile.MEDIA3_STANDARD,

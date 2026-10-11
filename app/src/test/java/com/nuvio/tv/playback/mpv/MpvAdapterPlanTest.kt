@@ -36,6 +36,29 @@ import org.junit.Test
 
 class MpvAdapterPlanTest {
     @Test
+    fun `live time limits and byte budgets follow selected target and device tier`() {
+        for (seconds in listOf(5, 20, 60)) {
+            val chosen = requirements().copy(
+                buffering = BufferingPreference.CUSTOM,
+                customBuffer = com.nuvio.tv.playback.core.LiveBufferPolicy.customBuffer(seconds),
+            )
+            for (tier in com.nuvio.tv.core.memory.MemoryTier.entries) {
+                val budget = com.nuvio.tv.core.memory.demuxerBytesFor(tier)
+                val result = MpvAdapterPlanFactory.create(start(requirements = chosen), budget)
+                val options = (result as PlaybackResult.Success).value.preInitOptions
+                assertEquals(seconds.toDouble().toString(), options["cache-secs"])
+                assertEquals(options["cache-secs"], options["demuxer-readahead-secs"])
+                assertEquals(budget.maxBytes.toString(), options["demuxer-max-bytes"])
+                assertEquals(budget.maxBackBytes.toString(), options["demuxer-max-back-bytes"])
+            }
+        }
+        val auto = plan(start()).preInitOptions
+        assertEquals(auto["cache-secs"], auto["demuxer-readahead-secs"])
+        val vod = plan(start(request = PlaybackRequest("https://example.test/vod", contentType = ContentType.VOD)))
+        assertNull(vod.preInitOptions["cache-secs"])
+    }
+
+    @Test
     fun `direct graph spells native embed and hardware decode exactly`() {
         val plan = plan(
             start(
@@ -91,7 +114,7 @@ class MpvAdapterPlanTest {
     }
 
     @Test
-    fun `a chosen live buffer sets the rebuffer cushion and readahead while auto leaves mpv defaults`() {
+    fun `a chosen live buffer sets the rebuffer cushion and readahead while auto keeps the default refill cushion`() {
         // F13: mpv refills only 1 s after a stall by default; a user-chosen live buffer raises that.
         val chosen = requirements().copy(
             buffering = BufferingPreference.CUSTOM,
@@ -99,7 +122,8 @@ class MpvAdapterPlanTest {
         )
         val live = plan(start(requirements = chosen))
         assertEquals("10.0", live.preInitOptions["cache-pause-wait"])
-        assertEquals("40.0", live.preInitOptions["demuxer-readahead-secs"])
+        assertEquals("20.0", live.preInitOptions["demuxer-readahead-secs"])
+        assertEquals("20.0", live.preInitOptions["cache-secs"])
         val auto = plan(start())
         assertNull(auto.preInitOptions["cache-pause-wait"])
         val vod = plan(

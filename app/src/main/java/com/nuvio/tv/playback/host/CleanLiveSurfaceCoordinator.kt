@@ -23,6 +23,7 @@ import com.nuvio.tv.playback.core.Retryability
 import com.nuvio.tv.playback.core.SurfaceCapabilities
 import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.media3.Media3SurfaceHost
+import com.nuvio.tv.playback.media3.Media3SurfaceLease
 import com.nuvio.tv.playback.media3.ViewMedia3SurfaceHost
 import com.nuvio.tv.playback.mpv.MpvSurfaceHost
 import com.nuvio.tv.playback.mpv.MpvSurfaceLease
@@ -203,7 +204,14 @@ internal class CleanLiveSurfaceCoordinator(
                     },
                 ).acquire(mode, secure)
                 leased = result is PlaybackResult.Success
-                result
+                when (result) {
+                    is PlaybackResult.Failure -> result
+                    is PlaybackResult.Success -> PlaybackResult.Success(
+                        object : Media3SurfaceLease by result.value {
+                            override suspend fun freezeForTransition() = captureForTransition(slot, secure)
+                        },
+                    )
+                }
             } finally {
                 if (!leased) {
                     slot.released = true
@@ -266,8 +274,8 @@ internal class CleanLiveSurfaceCoordinator(
     }
 
     /**
-     * Copies the picture currently on the surface into the freeze frame (downscaled). Runs only while
-     * real video plays (LiveFreezeFramePolicy.mayCapture); a failed copy keeps the previous frame.
+     * Copies the outgoing picture into the freeze frame (downscaled) at an interruption boundary.
+     * A failed copy keeps the previous frame; moving playback must never call this on a timer.
      */
     suspend fun captureFrame() = withContext(mainDispatcher) {
         val slot = current ?: return@withContext
@@ -285,14 +293,17 @@ internal class CleanLiveSurfaceCoordinator(
         val translationX = view.translationX
         val translationY = view.translationY
         capturing = true
-        val copied = try {
-            suspendCancellableCoroutine { continuation ->
+        val copied: Boolean = try {
+            suspendCancellableCoroutine<Boolean> { continuation ->
                 frameCapturer.capture(view, target) { success ->
+                    capturing = false
                     if (continuation.isActive) continuation.resume(success)
                 }
             }
-        } finally {
-            capturing = false
+        } catch (failure: Exception) {
+            // Cancellation does not cancel PixelCopy: its callback still owns this bitmap.
+            if (failure !is kotlinx.coroutines.CancellationException) capturing = false
+            throw failure
         }
         if (copied) {
             spareFrame = frozenFrame
@@ -304,6 +315,20 @@ internal class CleanLiveSurfaceCoordinator(
         } else {
             spareFrame = target
         }
+    }
+
+    private suspend fun captureForTransition(slot: SurfaceSlot, secure: Boolean = false) = withContext(mainDispatcher) {
+        if (current !== slot || slot.released || secure) return@withContext
+        // Reading a 4K decoder surface can block its buffer queue for over a second on Amlogic.
+        // Do this only at an interruption boundary, never on a timer during moving playback.
+        try {
+            withTimeoutOrNull(1_500L) { captureFrame() }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // A best-effort picture must never prevent decoder teardown.
+        }
+        presentFreezeFrame(LiveFreezeFramePolicy.Overlay.FROZEN)
     }
 
     /** Shows, dims, hides or drops the freeze frame above the surface (never below a new surface). */
@@ -483,6 +508,7 @@ internal class CleanLiveSurfaceCoordinator(
         private val slot: SurfaceSlot,
         override val surface: Surface,
     ) : MpvSurfaceLease {
+        override suspend fun freezeForTransition() = captureForTransition(slot)
         override val mode: SurfaceMode = slot.mode
         override val secure: Boolean = false
         private var state = MpvLeaseState.ACQUIRED

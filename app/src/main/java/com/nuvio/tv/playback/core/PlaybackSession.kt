@@ -1575,6 +1575,7 @@ class PlaybackSession(
                         request.contentType,
                         request.network,
                         machine.snapshot.tracks.videoDimensions,
+                        requirements.takeIf { it?.generation == arm.generation }?.value?.customBuffer,
                     ),
                 )
                 lane.send(
@@ -1623,6 +1624,14 @@ class PlaybackSession(
                     PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME
                 }
                 else -> null
+            }
+            PlaybackState.DEGRADED -> if (
+                machine.request?.contentType == ContentType.LIVE &&
+                snapshot.isBuffering && snapshot.playWhenReady && !machine.paused
+            ) {
+                PlaybackPolicy.WatchdogPhase.LIVE_REBUFFER
+            } else {
+                null
             }
             PlaybackState.PLAYING -> if (
                 !machine.paused &&

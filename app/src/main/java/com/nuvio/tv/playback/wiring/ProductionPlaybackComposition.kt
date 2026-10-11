@@ -124,6 +124,7 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
     private val providerResolverFactory: ProviderPlaybackResolverFactory,
     private val applicationDnsResolver: ApplicationDnsResolver,
     private val legacyPreferenceSource: LegacyPlaybackPreferenceSnapshotSource,
+    private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
 ) {
     private val appContext = context.applicationContext
     private val strictPlaybackHttpClient = OkHttpClient.Builder().build()
@@ -221,12 +222,14 @@ internal class ProductionPlaybackSessionFactory @Inject constructor(
             backendFactory = AndroidMedia3BackendFactory(
                 context = appContext,
                 sharedHttpClient = strictPlaybackHttpClient,
+                playerMemoryBudget = playerMemoryBudget,
                 applicationDnsResolver = applicationDnsResolver,
                 sharedClientTlsPolicy = TlsPolicy.STRICT,
                 externalSubtitleResolver = host.externalSubtitleResolver,
             ),
         ),
         EngineType.LIBMPV to MpvEngine(
+            demuxerBudget = playerMemoryBudget.demuxerBytes(),
             scope = host.parentScope,
             surfaceHost = host.mpvSurfaceHost,
             backendFactory = AndroidMpvBackendFactory(

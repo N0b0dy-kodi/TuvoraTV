@@ -251,7 +251,7 @@ class CleanLivePlaybackHostTest {
     }
 
     @Test
-    fun `playing video is captured and a reconnect shows the frozen frame instead of black`() = runTest {
+    fun `playing video is not copied until an interruption and reconnect keeps the frozen frame`() = runTest {
         val fixture = fixture()
         fixture.owner.measure(
             android.view.View.MeasureSpec.makeMeasureSpec(1920, android.view.View.MeasureSpec.EXACTLY),
@@ -267,9 +267,11 @@ class CleanLivePlaybackHostTest {
             isPlaying = true,
             progress = com.nuvio.tv.playback.core.PlaybackProgressEvidence(renderedVideoFrame = true),
         )
-        val deadline = System.currentTimeMillis() + 2_000
-        while (fixture.captures == 0 && System.currentTimeMillis() < deadline) Thread.sleep(10)
-        assertTrue("a playing picture is captured periodically", fixture.captures > 0)
+        testScheduler.advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals("moving playback must never periodically copy the decoder surface", 0, fixture.captures)
+        lease.freezeForTransition()
+        assertEquals("capture once at the interruption boundary", 1, fixture.captures)
 
         fixture.snapshot.value = fixture.snapshot.value.copy(
             state = PlaybackState.LIVE_RECONNECTING,
@@ -413,7 +415,6 @@ class CleanLivePlaybackHostTest {
             applicationLooper = Looper.getMainLooper(),
             applicationDispatcher = Dispatchers.Unconfined,
             qualityReporter = com.nuvio.tv.playback.wiring.PlaybackQualityReporter { qualityReports += it },
-            freezeFrameCaptureIntervalMs = 20,
             mediaSessionFactory = CleanMediaSessionOwnerFactory { _, _, _, _, _ ->
                 if (mediaSessionCreationFails) error("synthetic creation failure")
                 mediaOwner

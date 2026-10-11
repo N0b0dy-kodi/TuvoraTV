@@ -20,6 +20,8 @@ internal interface MpvSurfaceLease {
     val mode: SurfaceMode
     val secure: Boolean
     val surface: Surface
+    /** Optional host snapshot, requested only when playback is about to be interrupted. */
+    suspend fun freezeForTransition() = Unit
     fun markAttached()
     fun confirmDetached()
     fun confirmCoreDestroyed()

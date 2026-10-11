@@ -2,6 +2,9 @@ package com.nuvio.tv.playback.media3
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
+import com.nuvio.tv.BuildConfig
 import androidx.media3.common.C
 import com.nuvio.tv.playback.core.VideoDimensions
 import androidx.media3.common.AudioAttributes
@@ -131,6 +134,7 @@ internal class AndroidMedia3BackendFactory(
     private val playerDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
     private val releaseController: Media3ReleaseController = ForkMedia3ReleaseController,
     private val externalSubtitleResolver: ExternalSubtitleResolver = ExternalSubtitleResolver { null },
+    private val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
 ) : Media3BackendFactory {
     private val applicationContext = context.applicationContext
 
@@ -260,6 +264,8 @@ internal class AndroidMedia3BackendFactory(
             }
         }
         val loadControl = DefaultLoadControl.Builder()
+            .setTargetBufferBytes(playerMemoryBudget.exoTargetBufferBytes(Runtime.getRuntime().maxMemory()))
+            .setPrioritizeTimeOverSizeThresholds(false)
             .setBufferDurationsMs(
                 plan.buffer.minimumMs,
                 plan.buffer.maximumMs,
@@ -520,6 +526,8 @@ private class AndroidMedia3Backend(
     private var playerReleased = false
     private val factScope = CoroutineScope(SupervisorJob() + dispatcher)
     private var timelineJob: Job? = null
+    private var lastDebugTimelineMs = 0L
+    private var frozenForTransition = false
     private var trackRevision = 0L
     private var trackReferences: Map<PlaybackTrackId, Media3TrackReference> = emptyMap()
     private var currentTrackCatalog = PlaybackTrackCatalog()
@@ -594,6 +602,40 @@ private class AndroidMedia3Backend(
         }
     }
     private val analyticsListener = object : AnalyticsListener {
+        override fun onAudioDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            if (BuildConfig.IS_DEBUG_BUILD) {
+                Log.d("CleanMedia3Audio", "decoder=$decoderName initMs=$initializationDurationMs")
+            }
+        }
+
+        override fun onAudioUnderrun(
+            eventTime: AnalyticsListener.EventTime,
+            bufferSize: Int,
+            bufferSizeMs: Long,
+            elapsedSinceLastFeedMs: Long,
+        ) {
+            if (BuildConfig.IS_DEBUG_BUILD) {
+                Log.d("CleanMedia3Audio", "underrun bufferBytes=$bufferSize bufferMs=$bufferSizeMs " +
+                    "sinceFeedMs=$elapsedSinceLastFeedMs state=${player.playbackState} " +
+                    "bufferedMs=${player.totalBufferedDuration}")
+            }
+        }
+
+        override fun onDroppedVideoFrames(
+            eventTime: AnalyticsListener.EventTime,
+            droppedFrames: Int,
+            elapsedMs: Long,
+        ) {
+            if (BuildConfig.IS_DEBUG_BUILD) {
+                Log.d("CleanMedia3Audio", "videoDropped=$droppedFrames intervalMs=$elapsedMs")
+            }
+        }
+
         override fun onVideoDecoderInitialized(
             eventTime: AnalyticsListener.EventTime,
             decoderName: String,
@@ -660,6 +702,7 @@ private class AndroidMedia3Backend(
         if (released || surface == null) return@withContext backendFailure(FailurePhase.ENGINE_START)
         runCatching {
             terminalSuppressed = false
+            frozenForTransition = false
             pendingRestoration = restorationCheckpoint
             player.setMediaItem(mediaItem)
             if (startPositionMs > 0) player.seekTo(startPositionMs)
@@ -806,6 +849,7 @@ private class AndroidMedia3Backend(
 
     override suspend fun detachSurface(): PlaybackResult<Unit> = withContext(dispatcher) {
         val lease = surface ?: return@withContext PlaybackResult.Success(Unit)
+        freezeBeforeTransition()
         val detached = runCatching { lease.detach(player) }.getOrDefault(false)
         if (detached) {
             surface = null
@@ -822,6 +866,7 @@ private class AndroidMedia3Backend(
         timelineJob = null
         runCatching {
             player.playWhenReady = false
+            freezeBeforeTransition()
             player.stop()
             player.clearMediaItems()
             calls.cancelAll()
@@ -850,6 +895,7 @@ private class AndroidMedia3Backend(
                 FailureCode.NO_ELIGIBLE_GRAPH,
             )
         }
+        freezeBeforeTransition()
         this@AndroidMedia3Backend.plan = plan
         mediaItem = mediaItemFor(plan)
         firstAudioReported.set(false)
@@ -913,6 +959,16 @@ private class AndroidMedia3Backend(
 
     private fun publishTimelineFacts() {
         if (released) return
+        // Local debug measurements only: no media identity, endpoint, or analytics upload.
+        if (BuildConfig.IS_DEBUG_BUILD) {
+            val nowMs = SystemClock.elapsedRealtime()
+            if (nowMs - lastDebugTimelineMs >= 5_000L) {
+                lastDebugTimelineMs = nowMs
+                Log.d("CleanMedia3Audio", "timeline positionMs=${player.currentPosition} " +
+                    "bufferedMs=${player.totalBufferedDuration} state=${player.playbackState} " +
+                    "playing=${player.isPlaying} speed=${player.playbackParameters.speed}")
+            }
+        }
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it >= 0 }
         _events.tryEmit(
             Media3BackendEvent.TimelineUpdated(
@@ -1045,6 +1101,7 @@ private class AndroidMedia3Backend(
             if (!releaseGate.initiated) {
                 runCatching {
                     player.playWhenReady = false
+                    if (!awaitExistingRelease) freezeBeforeTransition()
                     player.stop()
                 }
                 runCatching { player.removeListener(playerListener) }
@@ -1068,6 +1125,12 @@ private class AndroidMedia3Backend(
             }
             success
         }
+    }
+
+    private suspend fun freezeBeforeTransition() {
+        if (frozenForTransition || !firstVideoReported.get()) return
+        frozenForTransition = true
+        surface?.freezeForTransition()
     }
 
     private companion object {

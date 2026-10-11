@@ -116,7 +116,7 @@ class PlaybackPolicyTest {
             ),
         )
         assertEquals(
-            1_000L,
+            2_500L,
             policy.watchdogDelayMs(
                 PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY,
                 ContentType.LIVE,
@@ -512,14 +512,27 @@ class PlaybackPolicyTest {
             PlaybackPolicy.WatchdogPhase.READY_TO_FIRST_VIDEO_FRAME,
         )) {
             assertEquals("$phase 4K", 6_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, uhd))
-            assertEquals("$phase HD", 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, hd))
-            assertEquals("$phase unknown", 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, null))
+            assertEquals("$phase HD", if (phase == PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY) 2_500L else 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, hd))
+            assertEquals("$phase unknown", if (phase == PlaybackPolicy.WatchdogPhase.VIDEO_TRACKS_TO_READY) 2_500L else 1_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, network, null))
         }
         // Resolution never touches the transport phases: those budgets are about bytes, not decoders.
         assertEquals(
             1_500L,
             policy.watchdogDelayMs(PlaybackPolicy.WatchdogPhase.BYTES_TO_TRACKS, ContentType.LIVE, network, uhd),
         )
+    }
+
+
+    @Test
+    fun `live rebuffer bound allows custom refill and does not blame decoder compatibility`() {
+        val phase = PlaybackPolicy.WatchdogPhase.LIVE_REBUFFER
+        assertEquals(30_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, PlaybackNetworkRequest()))
+        assertEquals(75_000L, policy.watchdogDelayMs(phase, ContentType.LIVE, PlaybackNetworkRequest(),
+            customBuffer = CustomBufferPreference(60_000, 120_000, 1_500, 60_000)))
+        val failure = policy.watchdogFailure(phase, StreamEvidence(), live = true)
+        assertEquals(FailureDomain.NETWORK, failure.domain)
+        assertEquals(Retryability.RETRYABLE_WITH_FRESH_REQUEST, failure.retryability)
+        assertEquals(false, failure.deterministic)
     }
 
     private fun requirements(

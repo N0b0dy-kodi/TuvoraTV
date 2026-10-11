@@ -21,6 +21,8 @@ interface Media3SurfaceLease {
     val secure: Boolean
 
     fun attach(player: ExoPlayer)
+    /** Optional host snapshot, requested only when playback is about to be interrupted. */
+    suspend fun freezeForTransition() = Unit
     /** True only when the renderer has acknowledged that it no longer owns this surface. */
     fun detach(player: ExoPlayer): Boolean
 

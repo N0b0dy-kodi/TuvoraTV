@@ -1690,7 +1690,7 @@ class PlaybackSessionTest {
         engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0))
         runCurrent()
 
-        advanceTimeBy(1_000)
+        advanceTimeBy(2_500)
         runCurrent()
 
         val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
@@ -2026,6 +2026,118 @@ class PlaybackSessionTest {
         assertEquals(2, engine.startCalls)
         assertEquals(AudioOutputPreference.PCM, engine.lastStartInput?.requirements?.audioOutput)
         assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        close(session)
+    }
+
+
+    @Test
+    fun `stuck live buffering reconnects with fresh request despite trickle and duplicate buffering events`() = runTest {
+        var resolutions = 0
+        val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+        val engine = FakeEngine { count, input, events ->
+            if (count > 1) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+        }
+        val session = session(engine, policy = PlaybackPolicy(), diagnostics = PlaybackDiagnostics(diagnostics::add),
+            requestResolver = PlaybackRequestResolver { request ->
+                resolutions++
+                PlaybackResult.Success(request.resolved())
+            })
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        engine.emit(PlaybackEvent.BufferingStarted(1))
+        runCurrent()
+        advanceTimeBy(29_999)
+        runCurrent()
+        assertEquals(0, engine.releaseCalls)
+        engine.emit(PlaybackEvent.BytesReceived(1))
+        engine.emit(PlaybackEvent.BufferingStarted(1))
+        runCurrent()
+        advanceTimeBy(1)
+        runCurrent()
+        val expired = diagnostics.single { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED }
+        assertEquals(FailureDomain.NETWORK, expired.failure?.domain)
+        advanceTimeBy(1_001)
+        runCurrent()
+        assertEquals(2, resolutions)
+        assertEquals(2, engine.startCalls)
+        assertEquals(1, engine.releaseCalls)
+        assertEquals(1, engine.maxActiveConnections)
+        close(session)
+    }
+
+    @Test
+    fun `live buffering watchdog cancels after refill pause stop lifecycle exit or zap`() = runTest {
+        for (action in listOf("refill", "pause", "stop", "inactive", "zap")) {
+            val lifecycleEvents = MutableSharedFlow<PlaybackLifecycleEvent>(extraBufferCapacity = 4)
+            val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+            val engine = FakeEngine { count, input, events ->
+                if (count > 1) events.emit(PlaybackEvent.FirstVideoFrame(input.generation))
+            }
+            val session = session(engine, policy = PlaybackPolicy(), diagnostics = PlaybackDiagnostics(diagnostics::add),
+                lifecycle = PlaybackLifecyclePort { lifecycleEvents })
+            runCurrent()
+            session.dispatch(PlaybackCommand.SurfaceAvailable)
+            session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+            runCurrent()
+            engine.emit(PlaybackEvent.FirstVideoFrame(1))
+            engine.emit(PlaybackEvent.BufferingStarted(1))
+            runCurrent()
+            advanceTimeBy(10_000)
+            runCurrent()
+            when (action) {
+                "refill" -> engine.emit(PlaybackEvent.BufferingEnded(1))
+                "pause" -> session.dispatch(PlaybackCommand.Pause)
+                "stop" -> session.dispatch(PlaybackCommand.Stop)
+                "inactive" -> lifecycleEvents.emit(PlaybackLifecycleEvent.INACTIVE)
+                "zap" -> session.dispatch(PlaybackCommand.Tune(secondLiveRequest, SessionProfile.FULLSCREEN))
+            }
+            runCurrent()
+            advanceTimeBy(35_000)
+            runCurrent()
+            assertTrue(action, diagnostics.none { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+            close(session)
+        }
+    }
+
+    @Test
+    fun `audio only live buffering gets bounded recovery but VOD buffering does not`() = runTest {
+        for (request in listOf(liveRequest, vodRequest)) {
+            val diagnostics = mutableListOf<PlaybackDiagnosticEvent>()
+            val engine = FakeEngine()
+            val session = session(engine, policy = PlaybackPolicy(), diagnostics = PlaybackDiagnostics(diagnostics::add))
+            session.dispatch(PlaybackCommand.SurfaceAvailable)
+            session.dispatch(PlaybackCommand.Tune(request, SessionProfile.FULLSCREEN))
+            runCurrent()
+            engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = false, 1, 0))
+            engine.emit(PlaybackEvent.FirstAudio(1))
+            engine.emit(PlaybackEvent.BufferingStarted(1))
+            runCurrent()
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals(request.contentType == ContentType.LIVE,
+                diagnostics.any { it.code == PlaybackDiagnosticCode.WATCHDOG_EXPIRED })
+            close(session)
+        }
+    }
+
+    @Test
+    fun `HD decoder initialization may take eighteen hundred milliseconds without fallback`() = runTest {
+        val engine = FakeEngine()
+        val session = session(engine, policy = PlaybackPolicy())
+        session.dispatch(PlaybackCommand.SurfaceAvailable)
+        session.dispatch(PlaybackCommand.Tune(liveRequest, SessionProfile.FULLSCREEN))
+        runCurrent()
+        engine.emit(PlaybackEvent.TracksAvailable(1, hasVideo = true, 1, 0, VideoDimensions(1920, 1080)))
+        runCurrent()
+        advanceTimeBy(1_800)
+        runCurrent()
+        engine.emit(PlaybackEvent.VideoDecoderInitialized(1, "decoder"))
+        engine.emit(PlaybackEvent.FirstVideoFrame(1))
+        runCurrent()
+        assertEquals(PlaybackState.PLAYING, session.snapshot.value.state)
+        assertEquals(0, engine.releaseCalls)
         close(session)
     }
 

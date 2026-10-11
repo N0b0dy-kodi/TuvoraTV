@@ -581,6 +581,7 @@ private class CleanPlaybackLabRuntime(
                 backendFactory = AndroidMedia3BackendFactory(
                     context = context,
                     sharedHttpClient = http,
+                    playerMemoryBudget = com.nuvio.tv.core.memory.AndroidPlayerMemoryBudget(context),
                     applicationDnsResolver = { key ->
                         key.value.takeIf(playlistDns::usesDoh)?.let(playlistDns::dnsFor)
                     },
@@ -588,6 +589,7 @@ private class CleanPlaybackLabRuntime(
                 ),
             )
             EngineType.LIBMPV -> MpvEngine(
+                demuxerBudget = com.nuvio.tv.core.memory.AndroidPlayerMemoryBudget(context).demuxerBytes(),
                 scope = scope,
                 surfaceHost = requireNotNull(preparedMpvHost),
                 backendFactory = AndroidMpvBackendFactory(context),

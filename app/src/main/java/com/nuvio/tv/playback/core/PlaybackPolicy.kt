@@ -24,19 +24,21 @@ class PlaybackPolicy(
         val enabled: Boolean = true,
         val liveBytesToTracksMs: Long = 1_500L,
         val vodBytesToTracksMs: Long = 3_000L,
-        // The reference table starts its next budget at renderer-ready. A silent codec-init wedge
-        // has no such callback, so v1 conservatively uses the same live/VOD bound for that gap.
-        val liveTracksToReadyMs: Long = 1_000L,
+        // Give non-4K hardware decoders time to initialize without a premature handoff.
+        // This is only the tracks->decoder phase; first-frame and transport budgets stay separate.
+        val liveTracksToReadyMs: Long = 2_500L,
         val vodTracksToReadyMs: Long = 2_000L,
         val liveReadyToFirstFrameMs: Long = 1_000L,
         val vodReadyToFirstFrameMs: Long = 2_000L,
         val runtimeVideoProgressWindowMs: Long = 5_000L,
         val surfaceAttachmentProgressMs: Long = 3_000L,
+        /** Absolute live buffering bound, including slow trickle/refill without an engine error. */
+        val liveRebufferMs: Long = 30_000L,
         /**
          * Floor for the two decoder phases when the track header says >1080p. Measured first
          * frame on 4K HEVC: MediaTek (Fire TV 4K Max) 3.8s, Amlogic (Onn) 4.18s — a 3.5s floor
          * lost the Onn by 2ms and forced the handoff it was meant to prevent. 6s is still a bounded
-         * safety net for a genuinely wedged decoder; the 1s zap budget stays for <=1080p.
+         * safety net for a genuinely wedged decoder; the shorter budgets stay for <=1080p.
          */
         val highResolutionDecoderMs: Long = 6_000L,
     ) {
@@ -51,6 +53,7 @@ class PlaybackPolicy(
                 require(vodReadyToFirstFrameMs > 0)
                 require(runtimeVideoProgressWindowMs > 0)
                 require(surfaceAttachmentProgressMs > 0)
+                require(liveRebufferMs > 0)
             }
         }
     }
@@ -62,6 +65,7 @@ class PlaybackPolicy(
         VIDEO_TRACKS_TO_READY,
         READY_TO_FIRST_VIDEO_FRAME,
         RUNTIME_VIDEO_PROGRESS,
+        LIVE_REBUFFER,
     }
 
     fun watchdogEnabled(): Boolean = watchdogConfiguration.enabled
@@ -71,6 +75,7 @@ class PlaybackPolicy(
         contentType: ContentType,
         network: PlaybackNetworkRequest,
         videoDimensions: VideoDimensions? = null,
+        customBuffer: CustomBufferPreference? = null,
     ): Long = when (phase) {
         WatchdogPhase.WAITING_FOR_SURFACE -> watchdogConfiguration.surfaceAttachmentProgressMs
         WatchdogPhase.FIRST_MEDIA_BYTE -> minOf(
@@ -99,10 +104,14 @@ class PlaybackPolicy(
             videoDimensions,
         )
         WatchdogPhase.RUNTIME_VIDEO_PROGRESS -> watchdogConfiguration.runtimeVideoProgressWindowMs
+        WatchdogPhase.LIVE_REBUFFER -> maxOf(
+            watchdogConfiguration.liveRebufferMs,
+            (customBuffer?.rebufferStartBufferMs?.toLong() ?: 0L) + 15_000L,
+        )
     }
 
     /**
-     * The zap budgets are tuned for SD/HD. A hardware decoder takes several seconds to open a
+     * The decoder budgets are tuned for SD/HD. A hardware decoder takes several seconds to open a
      * 4K stream on Amlogic/MediaTek boxes, and treating that as a decoder failure hands the
      * stream off for nothing (field: 1.5.9 "starting takes seconds" on 4K channels). Track headers
      * expose the size before the decoder opens, so the budget can follow the resolution.
@@ -156,6 +165,12 @@ class PlaybackPolicy(
             domain = FailureDomain.VIDEO_RENDERER_SURFACE,
             phase = FailurePhase.ENGINE_START,
             retryability = Retryability.HANDOFF_ELIGIBLE,
+        )
+        WatchdogPhase.LIVE_REBUFFER -> PlaybackFailure(
+            code = FailureCode.NETWORK_TIMEOUT,
+            domain = FailureDomain.NETWORK,
+            phase = FailurePhase.PLAYBACK,
+            retryability = Retryability.RETRYABLE_WITH_FRESH_REQUEST,
         )
         WatchdogPhase.RUNTIME_VIDEO_PROGRESS -> PlaybackFailure(
             code = FailureCode.NO_PROGRESS,

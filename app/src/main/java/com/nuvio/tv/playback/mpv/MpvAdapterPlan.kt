@@ -57,7 +57,11 @@ internal enum class MpvDnsMode {
 internal object MpvAdapterPlanFactory {
     private const val DEFAULT_USER_AGENT = com.nuvio.tv.playback.core.DEFAULT_STREAM_USER_AGENT
 
-    fun create(input: PlaybackEngineStart): PlaybackResult<MpvAdapterPlan> {
+    fun create(
+        input: PlaybackEngineStart,
+        demuxerBudget: com.nuvio.tv.core.contracts.DemuxerBudgetBytes =
+            com.nuvio.tv.core.contracts.DemuxerBudgetBytes(64L * 1024 * 1024, 32L * 1024 * 1024),
+    ): PlaybackResult<MpvAdapterPlan> {
         val request = input.request
         val graph = input.graph
         val requirements = input.requirements
@@ -121,9 +125,16 @@ internal object MpvAdapterPlanFactory {
             "user-agent" to (request.userAgent ?: DEFAULT_USER_AGENT),
             "tls-verify" to "yes",
             "cache" to "yes",
-            "demuxer-readahead-secs" to bufferMaximumMs(input).div(1_000.0).toString(),
+            "demuxer-readahead-secs" to bufferTargetMs(input).div(1_000.0).toString(),
+            "demuxer-max-bytes" to demuxerBudget.maxBytes.toString(),
+            "demuxer-max-back-bytes" to demuxerBudget.maxBackBytes.toString(),
             "ao" to "audiotrack,aaudio",
         )
+        // With cache=yes, cache-secs can override readahead. Spell both time limits so
+        // the selected live target is effective, bounded further by the device byte budget.
+        if (request.contentType == ContentType.LIVE) {
+            options["cache-secs"] = bufferTargetMs(input).div(1_000.0).toString()
+        }
         // F13: a user-chosen live buffer also sets how long mpv refills after a stall (default 1 s).
         input.requirements.customBuffer
             ?.takeIf { request.contentType == ContentType.LIVE }
@@ -217,6 +228,13 @@ internal object MpvAdapterPlanFactory {
                 restorationCheckpoint = input.restorationCheckpoint,
             ),
         )
+    }
+
+    private fun bufferTargetMs(input: PlaybackEngineStart): Int {
+        if (input.request.contentType == ContentType.LIVE) {
+            input.requirements.customBuffer?.let { return it.minimumBufferMs }
+        }
+        return bufferMaximumMs(input)
     }
 
     private fun bufferMaximumMs(input: PlaybackEngineStart): Int {
