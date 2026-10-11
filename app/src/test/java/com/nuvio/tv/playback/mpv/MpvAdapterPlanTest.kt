@@ -57,6 +57,14 @@ class MpvAdapterPlanTest {
     }
 
     @Test
+    fun `mpv always sets tls-verify explicitly because the libmpv default depends on how it was built`() {
+        for (type in listOf(ContentType.LIVE, ContentType.VOD)) {
+            val plan = plan(start(request = PlaybackRequest("https://example.test/x", contentType = type)))
+            assertEquals("tls-verify for $type", "yes", plan.preInitOptions["tls-verify"])
+        }
+    }
+
+    @Test
     fun `re-openable live enables ffmpeg demuxer reconnect so a transient drop freezes not blacks`() {
         // Field bug (Amlogic onn box): a transient live drop / provider rollover tore the graph
         // down to a black screen with no auto-recovery. FFmpeg-level reconnect keeps the decoder and

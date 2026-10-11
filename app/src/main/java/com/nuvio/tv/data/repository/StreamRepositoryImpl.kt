@@ -105,6 +105,7 @@ class StreamRepositoryImpl @Inject constructor(
             val freshUrl = refreshIptvStreamUrl(videoId) ?: return emptyList()
             item.copy(streamUrl = freshUrl)
         }
+        com.nuvio.tv.core.iptv.IptvPanelHosts.note(playable.streamUrl)
         return playable.toAddonStreams().map { group -> group.copy(streams = group.streams.map { stream ->
             account?.let { com.nuvio.tv.core.iptv.StreamUserAgentPolicy.applyTo(stream, it) } ?: stream
         }) }
@@ -117,7 +118,10 @@ class StreamRepositoryImpl @Inject constructor(
      * giving up — forcing the mint past a static verdict, because the static URL just died).
      * Xtream/M3U return their stable URL, so a "refresh" is a no-op round-trip at worst.
      */
-    override suspend fun refreshIptvStreamUrl(videoId: String, forceFresh: Boolean): String? {
+    override suspend fun refreshIptvStreamUrl(videoId: String, forceFresh: Boolean): String? =
+        refreshIptvStreamUrlInner(videoId, forceFresh).also { com.nuvio.tv.core.iptv.IptvPanelHosts.note(it) }
+
+    private suspend fun refreshIptvStreamUrlInner(videoId: String, forceFresh: Boolean): String? {
         val parsed = com.nuvio.tv.core.iptv.XtreamItemRegistry.parseId(videoId) ?: return null
         val account = xtreamAccountStore.accounts.first().firstOrNull { it.id == parsed.accountId } ?: return null
         val client = iptvClientFactory.clientFor(account)
@@ -164,6 +168,7 @@ class StreamRepositoryImpl @Inject constructor(
         return runCatching { xtreamStreamSource.resolveDeferredUrl(url, accounts) }
             .onFailure { Log.w(TAG, "deferred stalker mint failed: ${it.message}") }
             .getOrNull()
+            .also { com.nuvio.tv.core.iptv.IptvPanelHosts.note(it) }
     }
 
     override suspend fun refreshMatchedIptvStreamUrl(
@@ -198,7 +203,10 @@ class StreamRepositoryImpl @Inject constructor(
                     xtreamStreamSource.resolveDeferredUrl(freshUrl, candidates, forceFresh = true)
                 }.onFailure { Log.w(TAG, "matched-iptv refresh: deferred mint failed: ${it.message}") }
                     .getOrNull()
-                if (!playable.isNullOrBlank() && playable != failedUrl) return playable
+                if (!playable.isNullOrBlank() && playable != failedUrl) {
+                    com.nuvio.tv.core.iptv.IptvPanelHosts.note(playable)
+                    return playable
+                }
             }
         }
         return null
@@ -396,6 +404,7 @@ class StreamRepositoryImpl @Inject constructor(
                             } ?: emptyList<Stream>().also {
                                 Log.w(TAG, "Xtream match for ${acc.name} cut after ${com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.PLAYLIST_BUDGET_MS} ms (playlist not answering)")
                             }
+                            streams.forEach { com.nuvio.tv.core.iptv.IptvPanelHosts.note(it.url) }
                             if (streams.isNotEmpty()) {
                                 resultChannel.send(
                                     AddonStreams(

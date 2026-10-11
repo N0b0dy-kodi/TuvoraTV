@@ -81,6 +81,8 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     @Inject lateinit var serverUserStateProjection: ServerUserStateProjection
     @Inject lateinit var serverMatcher: ServerMatcher
     @Inject lateinit var serverTrust: com.nuvio.tv.data.mediaserver.ServerTrust
+    @Inject lateinit var serverRepository: com.nuvio.tv.data.mediaserver.ServerRepository
+    @Inject lateinit var xtreamAccountStore: com.nuvio.tv.data.local.XtreamAccountStore
 
     // Route WorkManager through Hilt so @HiltWorker workers get their dependencies injected.
     override val workManagerConfiguration: Configuration
@@ -125,6 +127,17 @@ class NuvioApplication : Application(), SingletonImageLoader.Factory, Configurat
     override fun onCreate() {
         super.onCreate()
         com.nuvio.tv.data.mediaserver.ServerMediaRouting.router = com.nuvio.tv.data.mediaserver.ServerMediaRouter(serverTrust)
+        // Unverified TLS for playback is an IPTV-panel-only fallback; a media-server host is never eligible.
+        com.nuvio.tv.core.contracts.PlaybackTrustHosts.registerMediaServerHostPredicate("servers") { host ->
+            serverRepository.uiState.value.connections.any { connection ->
+                com.nuvio.tv.core.contracts.PlaybackTlsPolicy.normalize(
+                    runCatching { java.net.URI(connection.address).host }.getOrNull()
+                ) == host
+            }
+        }
+        analyticsConsentScope.launch {
+            xtreamAccountStore.accounts.collect { com.nuvio.tv.core.iptv.IptvPanelHosts.setAccounts(it) }
+        }
         // Own sources register into the plural source ports (id predicates, search) before anything asks.
         com.nuvio.tv.core.iptv.IptvSourceRegistrations.register(xtreamIptvSearchProvider)
         // Resolve the memory tier once, before anything sizes a cache from it.

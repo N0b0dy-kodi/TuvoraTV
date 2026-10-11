@@ -19,6 +19,7 @@ object IptvSourceRegistrations {
 
     fun register(searchProvider: com.nuvio.tv.core.contracts.IptvSearchProvider? = null) {
         searchProvider?.let { com.nuvio.tv.core.contracts.SearchProviderRegistry.register(NAME, it) }
+        com.nuvio.tv.core.contracts.PlaybackTrustHosts.registerPanelHostPredicate(NAME, IptvPanelHosts::isPanelHost)
         OwnSourcePolicy.registerContentIdPredicate(NAME) { id -> CONTENT_ID_PREFIXES.any { id.startsWith(it) } }
         OwnSourcePolicy.registerSubtitleScopedPredicate(NAME) { id -> id.startsWith(PROVIDER_SCOPED_PREFIX) }
     }

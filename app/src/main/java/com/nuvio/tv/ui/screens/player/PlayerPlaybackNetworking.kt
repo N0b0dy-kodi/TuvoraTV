@@ -10,6 +10,8 @@ import okhttp3.OkHttpClient
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
+import com.nuvio.tv.core.contracts.PlaybackTlsClass
+import com.nuvio.tv.core.contracts.PlaybackTrustHosts
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HostnameVerifier
@@ -31,7 +33,11 @@ internal object PlayerPlaybackNetworking {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
-    private val playbackHostnameVerifier = HostnameVerifier { _, _ -> true }
+    // Trust-all certificate chains are only ever used for an IPTV panel host. The verifier runs on EVERY hop
+    // (redirects included), so a panel redirecting to a media server, an add-on or any other host is refused.
+    private val playbackHostnameVerifier = HostnameVerifier { host, _ ->
+        PlaybackTrustHosts.classify(host) == PlaybackTlsClass.PermissivePanel
+    }
 
     private val sslContext: SSLContext by lazy {
         SSLContext.getInstance("TLS").apply {
@@ -40,8 +46,8 @@ internal object PlayerPlaybackNetworking {
     }
 
     /**
-     * Fallback OkHttpClient equipped with trust-all SSL configuration for self-signed
-     * or untrusted local media servers (e.g. self-signed WebDAV / Plex / Jellyfin).
+     * Fallback OkHttpClient with trust-all certificate chains, for IPTV PANEL hosts only: its hostname verifier
+     * accepts a host only when [PlaybackTrustHosts] classifies it as a panel (and never a media-server host).
      */
     internal val trustAllPlaybackHttpClient: OkHttpClient by lazy {
         val dispatcher = okhttp3.Dispatcher().apply {
@@ -74,7 +80,9 @@ internal object PlayerPlaybackNetworking {
                 try {
                     chain.proceed(request)
                 } catch (e: SSLException) {
-                    // Fallback to trust-all client if standard system SSL fails (e.g. self-signed local server)
+                    // Unverified TLS is a panel-only escape hatch (IPTV panels often present self-signed certificates).
+                    // Media servers, add-ons, CDNs and unknown hosts keep the SSL failure.
+                    if (PlaybackTrustHosts.classify(request.url.host) != PlaybackTlsClass.PermissivePanel) throw e
                     trustAllPlaybackHttpClient.newCall(request).execute()
                 }
             }

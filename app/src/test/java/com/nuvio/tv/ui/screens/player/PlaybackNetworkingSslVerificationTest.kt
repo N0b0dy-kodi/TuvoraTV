@@ -59,23 +59,12 @@ class PlaybackNetworkingSslVerificationTest {
     }
 
     @Test
-    fun `verifySSLExceptionTriggersAutomaticFallbackToTrustAllClient()`() {
+    fun `verifySSLExceptionIsNotMaskedForAHostThatIsNotAnIptvPanel()`() {
         val primaryClient = PlayerPlaybackNetworking.playbackHttpClient
-
-        var primaryAttempted = false
-        var fallbackAttempted = false
-
-        // Mock interceptor chain that simulates SSLException (e.g. self-signed local WebDAV server)
-        val mockChain = object : Interceptor.Chain {
+        val chain = object : Interceptor.Chain {
             private val req = Request.Builder().url("https://local-webdav.server:8443/movie.mp4").build()
-
             override fun request(): Request = req
-
-            override fun proceed(request: Request): Response {
-                primaryAttempted = true
-                throw SSLException("CertificateNotTrusted: Local self-signed certificate")
-            }
-
+            override fun proceed(request: Request): Response = throw SSLException("CertificateNotTrusted")
             override fun connection(): okhttp3.Connection? = null
             override fun call(): okhttp3.Call = error("Not implemented")
             override fun connectTimeoutMillis(): Int = 15000
@@ -85,21 +74,11 @@ class PlaybackNetworkingSslVerificationTest {
             override fun withReadTimeout(timeout: Int, unit: java.util.concurrent.TimeUnit): Interceptor.Chain = this
             override fun withWriteTimeout(timeout: Int, unit: java.util.concurrent.TimeUnit): Interceptor.Chain = this
         }
-
-        // Find the fallback interceptor in primaryClient
         val fallbackInterceptor = primaryClient.interceptors.firstOrNull()
-        assertNotNull("Primary client must contain the SSLException fallback interceptor", fallbackInterceptor)
+        assertNotNull("Primary client must contain the SSLException interceptor", fallbackInterceptor)
 
-        var caughtThrowable: Throwable? = null
-        try {
-            fallbackInterceptor!!.intercept(mockChain)
-        } catch (t: Throwable) {
-            caughtThrowable = t
-            // Interceptor caught SSLException from primary chain and attempted fallback to trustAllClient
-            fallbackAttempted = true
-        }
+        val thrown = runCatching { fallbackInterceptor!!.intercept(chain) }.exceptionOrNull()
 
-        assertTrue("Primary chain must have been attempted", primaryAttempted)
-        assertTrue("Fallback mechanism must be triggered upon SSLException", fallbackAttempted)
+        assertTrue("a non-panel host keeps its SSL failure", thrown is SSLException)
     }
 }

@@ -45,7 +45,10 @@ data class XtreamResolvedItem(
 class XtreamItemRegistry @Inject constructor() {
     private val items = ConcurrentHashMap<String, XtreamResolvedItem>()
 
-    fun register(item: XtreamResolvedItem) { items[item.id] = item }
+    fun register(item: XtreamResolvedItem) {
+        items[item.id] = item
+        IptvPanelHosts.note(item.streamUrl)
+    }
     fun get(id: String): XtreamResolvedItem? = items[id]
     fun isXtreamId(id: String): Boolean = id.startsWith(PREFIX)
 
