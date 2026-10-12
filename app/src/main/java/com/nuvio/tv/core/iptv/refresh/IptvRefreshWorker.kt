@@ -6,6 +6,8 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.nuvio.tv.core.iptv.IptvClientFactory
+import com.nuvio.tv.core.iptv.match.XtreamMatchIndex
+import kotlinx.coroutines.CancellationException
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.content.IptvContentDb
 import com.nuvio.tv.core.iptv.isM3UBacked
@@ -16,9 +18,6 @@ import com.nuvio.tv.core.player.PlaybackActivityTracker
 import com.nuvio.tv.data.local.XtreamAccountStore
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 
 /**
@@ -27,8 +26,8 @@ import kotlinx.coroutines.flow.first
  *  - **M3U** (url/file): re-ingest via [com.nuvio.tv.core.iptv.M3UClient.ensureIngested] `force=true`
  *    (atomic catalog swap in the DB) + XMLTV EPG refresh (piggybacked inside ingest). The DB's
  *    `built_at` is the last-refresh timestamp.
- *  - **Xtream** (API-on-demand): nothing to re-ingest; warm the category lists (so a stale cache is
- *    refreshed) and bump [IptvRefreshStore]'s checked timestamp.
+ *  - **Xtream**: refresh only stale enabled catalogue kinds, including Live. Their committed
+ *    index timestamps determine freshness; a reachability check never substitutes for fresh categories.
  *
  * Skip-while-playing: checks [PlaybackActivityTracker] at run time and returns [Result.retry] if any
  * stream is active, so a catalog swap never runs mid-playback. Everything else is best-effort — a
@@ -44,6 +43,7 @@ class IptvRefreshWorker @AssistedInject constructor(
     private val refreshStore: IptvRefreshStore,
     private val playbackActivity: PlaybackActivityTracker,
     private val resolver: XtreamTmdbResolver,
+    private val matchIndex: XtreamMatchIndex,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -73,7 +73,7 @@ class IptvRefreshWorker @AssistedInject constructor(
             )
         }
         val dueIds = IptvRefreshDue.duePlaylists(candidates, now).map { it.playlistId }.toSet()
-        val due = enabled.filter { it.id in dueIds }
+        val due = enabled.filter { it.id in dueIds && (it.isXtream() || it.isM3UBacked()) }
 
         if (due.isEmpty()) {
             Log.i(TAG, "no playlists due (enabled=${enabled.size})")
@@ -89,40 +89,45 @@ class IptvRefreshWorker @AssistedInject constructor(
                 return Result.retry()
             }
             val ok = runCatching { refresh(acc) }
+                .onFailure { if (it is CancellationException) throw it }
                 .onFailure { Log.w(TAG, "refresh failed for ${acc.name}", it) }
                 .isSuccess
-            if (ok) refreshed++ else failed++
+            if (ok) {
+                refreshed++
+            } else failed++
         }
 
         Log.i(TAG, "IPTV refresh done: refreshed=$refreshed failed=$failed (due=${due.size}, enabled=${enabled.size})")
         return Result.success()
     }
 
-    /** Last-refresh timestamp: M3U → the ingested catalog's built_at; Xtream → the checked pref. */
+    /** Last-refresh timestamp: M3U → the ingested catalog's built_at; Xtream → the oldest enabled index. */
     private suspend fun lastRefreshFor(acc: XtreamAccount): Long? =
-        if (acc.isM3UBacked()) contentDb.builtAt(acc.id) else refreshStore.lastCheckedMs(acc.id)
+        if (acc.isM3UBacked()) contentDb.builtAt(acc.id) else if (acc.isXtream()) {
+            MatchKind.entries.filter { kind -> acc.typeEnabled(when (kind) {
+                MatchKind.LIVE -> XtreamAccount.TYPE_LIVE
+                MatchKind.MOVIE -> XtreamAccount.TYPE_MOVIES
+                MatchKind.SERIES -> XtreamAccount.TYPE_SERIES
+            }) }.map { matchIndex.builtAt(acc.id, it) ?: 0L }.minOrNull()
+        } else refreshStore.lastCheckedMs(acc.id)
 
     private suspend fun refresh(acc: XtreamAccount) {
         if (acc.isM3UBacked()) {
             // Re-ingest (fetch + parse + atomic swap) + piggybacked XMLTV refresh; updates built_at.
             clientFactory.m3u().ensureIngested(acc, force = true)
         } else {
-            // Xtream is API-on-demand — just warm the category lists so a stale cache refreshes, then
-            // record the check so the window resets. The three lists are independent — fetch parallel.
-            val client = clientFactory.clientFor(acc)
-            coroutineScope {
-                listOf(
-                    async { client.liveCategories(acc) },
-                    async { client.vodCategories(acc) },
-                    async { client.seriesCategories(acc) },
-                ).awaitAll()
+            val kinds = MatchKind.entries.filter { kind ->
+                acc.typeEnabled(when (kind) {
+                    MatchKind.LIVE -> XtreamAccount.TYPE_LIVE
+                    MatchKind.MOVIE -> XtreamAccount.TYPE_MOVIES
+                    MatchKind.SERIES -> XtreamAccount.TYPE_SERIES
+                })
             }
-            // Sync the match index on the playlist's own cadence: an incremental diff, so
-            // unchanged titles cost a fingerprint check and only new/renamed ones re-index.
-            // ensureIndexed never throws (failures back off internally).
-            if (acc.isXtream()) {
-                resolver.ensureIndexed(acc, MatchKind.MOVIE, force = true)
-                resolver.ensureIndexed(acc, MatchKind.SERIES, force = true)
+            check(kinds.isNotEmpty()) { "No enabled catalogue kinds" }
+            val stamps = kinds.associateWith { matchIndex.builtAt(acc.id, it) }
+            for (kind in com.nuvio.tv.core.iptv.IptvCatalogFreshness.dueKinds(stamps, acc.autoRefreshHours, System.currentTimeMillis())) resolver.ensureIndexed(acc, kind, awaitRefresh = true)
+            check(kinds.all { !com.nuvio.tv.core.iptv.IptvCatalogFreshness.stale(matchIndex.builtAt(acc.id, it), acc.autoRefreshHours, System.currentTimeMillis()) }) {
+                "Catalogue refresh did not commit all enabled kinds"
             }
             refreshStore.markChecked(acc.id)
         }

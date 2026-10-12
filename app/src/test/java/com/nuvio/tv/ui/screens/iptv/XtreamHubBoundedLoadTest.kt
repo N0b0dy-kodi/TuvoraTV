@@ -25,6 +25,7 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -59,6 +60,8 @@ class XtreamHubBoundedLoadTest {
         id = "http://stall.invalid|u", name = "Stall", baseUrl = "http://stall.invalid", username = "u", password = "p",
     )
 
+    private var delayedCategories: CompletableDeferred<List<XtreamCategory>>? = null
+    private var categoryName = "Action"
     private var hangCategories = false
     private var failRowTimes = 0
     private var hangRow = false
@@ -68,8 +71,9 @@ class XtreamHubBoundedLoadTest {
     private val provider = object : IptvClient {
         override suspend fun liveCategories(acc: XtreamAccount) = Result.success(emptyList<XtreamCategory>())
         override suspend fun vodCategories(acc: XtreamAccount): Result<List<XtreamCategory>> {
+            delayedCategories?.let { return Result.success(it.await()) }
             if (hangCategories) awaitCancellation()
-            return Result.success(listOf(XtreamCategory("1", "Action")))
+            return Result.success(listOf(XtreamCategory("1", categoryName)))
         }
         override suspend fun seriesCategories(acc: XtreamAccount) = Result.success(emptyList<XtreamCategory>())
         override suspend fun liveChannels(acc: XtreamAccount, categoryId: String?) = Result.success(emptyList<XtreamChannel>())
@@ -136,7 +140,35 @@ class XtreamHubBoundedLoadTest {
             failover = failover,
             layoutPreferenceDataStore = layout,
             context = context,
+            resolver = mockk(relaxed = true),
         )
+    }
+
+    @Test
+    fun `a committed refresh replaces categories already displayed successfully`() = runTest(main.dispatcher) {
+        val vm = hub()
+        runCurrent()
+        assertEquals("Action", vm.uiState.value.categories.single().name)
+        categoryName = "Today events"
+        IptvImportProgress.finished(account.id)
+        runCurrent()
+        assertEquals("Today events", vm.uiState.value.categories.single().name)
+    }
+
+    @Test
+    fun `a late response cannot restore categories from before a refresh`() = runTest(main.dispatcher) {
+        val oldResponse = CompletableDeferred<List<XtreamCategory>>()
+        delayedCategories = oldResponse
+        val vm = hub()
+        runCurrent()
+        delayedCategories = null
+        categoryName = "Today events"
+        IptvImportProgress.finished(account.id)
+        runCurrent()
+        assertEquals("Today events", vm.uiState.value.categories.single().name)
+        oldResponse.complete(listOf(XtreamCategory("1", "Yesterday events")))
+        runCurrent()
+        assertEquals("Today events", vm.uiState.value.categories.single().name)
     }
 
     @Test

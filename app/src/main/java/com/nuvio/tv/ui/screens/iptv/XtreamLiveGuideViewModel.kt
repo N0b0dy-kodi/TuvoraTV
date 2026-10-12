@@ -345,8 +345,29 @@ class XtreamLiveGuideViewModel @Inject constructor(
     private val epgAdmission = com.nuvio.tv.core.iptv.TileEpgAdmission()
 
     // Caches so revisiting an account/category is instant (no spinner flash, no re-fetch).
+    private val cacheCheckedAt = mutableMapOf<String, Long>()
     private val categoriesCache = mutableMapOf<String, List<GuideCategory>>()   // accountId -> RAW provider cats (overlay applied at display)
     private val channelsCache = mutableMapOf<String, List<GuideChannel>>()      // "accountId|categoryId"
+    init {
+        viewModelScope.launch {
+            var seen = emptyMap<com.nuvio.tv.core.iptv.IptvCatalogKey, Long>()
+            com.nuvio.tv.core.iptv.IptvCatalogChanges.state.collect { revisions ->
+                revisions.forEach { (key, revision) ->
+                    val id = key.accountId
+                    if (seen[key] != revision && (key.kind == null || key.kind == "LIVE")) {
+                        categoriesCache.remove(id)
+                        channelsCache.keys.removeAll { it.startsWith("$id|") }
+                        account?.takeIf { it.id == id }?.let { acc ->
+                            channelsJob?.cancel()
+                            val token = accountCommitFence.activate(id)
+                            loadCategoryColumn(acc, token)
+                        }
+                    }
+                }
+                seen = revisions
+            }
+        }
+    }
     // B120: catalog twins of Favourites/Recent rows (content id -> real row; a handful, not the catalog),
     // and the accounts whose lineup was already fetched once to find them.
     private val syntheticTwins = HashMap<String, GuideChannel>()
@@ -572,8 +593,14 @@ class XtreamLiveGuideViewModel @Inject constructor(
     /** Called by the screen when the hub's selected account changes (or its options change —
      *  category selections filter the guide's category column at display time). */
     fun setAccount(acc: XtreamAccount) {
-        if (acc == account) return
-        val sameAccount = acc.id == account?.id
+        val expired = com.nuvio.tv.core.iptv.IptvCatalogFreshness.stale(cacheCheckedAt[acc.id], acc.autoRefreshHours, System.currentTimeMillis())
+        if (acc == account && !expired) return
+        if (expired) {
+            categoriesCache.remove(acc.id)
+            channelsCache.keys.removeAll { it.startsWith("${acc.id}|") }
+            cacheCheckedAt[acc.id] = System.currentTimeMillis()
+        }
+        val sameAccount = acc.id == account?.id && !expired
         val accountToken = accountCommitFence.activate(acc.id)
         if (!sameAccount) {
             // Provider work is allowed to ignore coroutine cancellation at an HTTP/storage
@@ -738,13 +765,12 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     /** [accountId]'s catalog is local now: a column or channel list that ended Failed is asked once more. */
     private fun onCatalogLanded(accountId: String) {
+        categoriesCache.remove(accountId)
+        channelsCache.keys.removeAll { it.startsWith("$accountId|") }
         val acc = account?.takeIf { it.id == accountId } ?: return
-        val token = accountCommitFence.capture(acc.id) ?: return
-        val st = _uiState.value
-        when {
-            st.categoriesLoad is LoadStatus.Failed -> loadCategoryColumn(acc, token)
-            st.channelsLoad is LoadStatus.Failed -> selectCategoryFor(acc, st.selectedCategoryId, force = false, token = token)
-        }
+        channelsJob?.cancel()
+        val token = accountCommitFence.activate(acc.id)
+        loadCategoryColumn(acc, token)
     }
 
     /** Category selections hide deselected provider categories; the synthetic ones
@@ -754,6 +780,10 @@ class XtreamLiveGuideViewModel @Inject constructor(
 
     fun selectCategory(categoryId: String?, force: Boolean = false) {
         val acc = account ?: return
+        if (com.nuvio.tv.core.iptv.IptvCatalogFreshness.stale(cacheCheckedAt[acc.id], acc.autoRefreshHours, System.currentTimeMillis())) {
+            setAccount(acc)
+            return
+        }
         val token = accountCommitFence.capture(acc.id) ?: return
         selectCategoryFor(acc, categoryId, force, token)
     }

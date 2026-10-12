@@ -81,6 +81,7 @@ data class XtreamHubUiState(
      * by that Retry or a "catalog landed" event — never by composing it again.
      */
     val rowLoads: Map<String, LoadStatus> = emptyMap(),
+    val catalogueGeneration: Long = 0L,
     val error: String? = null,
     // The user's poster-size preference (Layout settings) — the hub's rails derive their card
     // size from the SAME source as the Modern home rows so the two surfaces always match.
@@ -125,6 +126,7 @@ class XtreamHubViewModel @Inject constructor(
     private val libraryRepository: LibraryRepository,
     private val fileStore: com.nuvio.tv.core.iptv.content.M3UFileStore,
     private val contentDb: com.nuvio.tv.core.iptv.content.IptvContentDb,
+    private val resolver: com.nuvio.tv.core.iptv.match.XtreamTmdbResolver,
     private val matchIndex: com.nuvio.tv.core.iptv.match.XtreamMatchIndex,
     private val posterEnricher: com.nuvio.tv.core.iptv.match.PosterEnricher,
     /** Step 0.3b: which of a playlist's servers failed last — the host the error card names. */
@@ -157,6 +159,10 @@ class XtreamHubViewModel @Inject constructor(
     private val inFlightCategories = mutableSetOf<String>()
 
     // In-memory caches so switching sections/accounts and coming back is instant (no spinner, no re-fetch).
+    private val pendingHeals = mutableSetOf<String>()
+    private val catalogEpochs = mutableMapOf<String, Long>()
+    private fun catalogEpoch(id: String) = catalogEpochs[id] ?: 0L
+    private val cacheCheckedAt = mutableMapOf<String, Long>()
     private val categoriesCache = mutableMapOf<String, List<XtreamCategory>>()          // "accountId|section"
 
     /**
@@ -180,6 +186,18 @@ class XtreamHubViewModel @Inject constructor(
     private val categoryLoadGate = Semaphore(MAX_CONCURRENT_CATEGORY_LOADS)
 
     init {
+        viewModelScope.launch {
+            var seen = emptyMap<com.nuvio.tv.core.iptv.IptvCatalogKey, Long>()
+            com.nuvio.tv.core.iptv.IptvCatalogChanges.state.collect { revisions ->
+                revisions.forEach { (key, revision) ->
+                    val id = key.accountId
+                    if (seen[key] != revision) {
+                        onCatalogLanded(id)
+                    }
+                }
+                seen = revisions
+            }
+        }
         // Track the poster-size preference so the hub's rails resize live with Layout settings,
         // exactly like the home rows do.
         viewModelScope.launch {
@@ -295,25 +313,34 @@ class XtreamHubViewModel @Inject constructor(
      * [IptvImportProgress.completed] only, so a dead provider never becomes a request loop.
      */
     private fun onCatalogLanded(accountId: String) {
-        val st = _uiState.value
-        if (st.selectedAccountId != accountId) return
-        if (st.categoriesLoad is LoadStatus.Failed ||
-            (st.categories.isEmpty() && st.categoriesLoad !is LoadStatus.Loading)
-        ) {
-            categoriesCache.remove("$accountId|${st.section}")   // an empty answer cached mid-import is stale now
-            _uiState.update { it.copy(error = null) }
+        if (_uiState.value.selectedAccountId == accountId) pendingHeals.addAll(_uiState.value.rowLoads.filterValues { it is LoadStatus.Failed }.keys)
+        catalogEpochs[accountId] = catalogEpoch(accountId) + 1L
+        cacheCheckedAt[accountId] = System.currentTimeMillis()
+        inFlightCategories.removeAll { it.startsWith("$accountId|") }
+        categoriesCache.keys.removeAll { it.startsWith("$accountId|") }
+        itemsCache.keys.removeAll { it.startsWith("$accountId|") }
+        if (_uiState.value.selectedAccountId == accountId) {
+            _uiState.update { it.copy(catalogueGeneration = it.catalogueGeneration + 1L, itemsByCategory = emptyMap(), rowLoads = emptyMap(), hasMoreByCategory = emptyMap()) }
             loadCategories()
-            return
         }
-        val failed = st.rowLoads.filterValues { it is LoadStatus.Failed }.keys
-        if (failed.isEmpty()) return
-        _uiState.update { it.copy(rowLoads = it.rowLoads - failed) }
-        failed.forEach { requestCategory(it, prefetch = false, explicit = true) }
+    }
+
+    private fun healRows() {
+        val ids = pendingHeals.toList()
+        pendingHeals.clear()
+        ids.forEach { requestCategory(it, prefetch = false, explicit = true) }
     }
 
     private fun loadCategories() {
         val acc = _uiState.value.selectedAccount ?: return
         val section = _uiState.value.section
+        if (com.nuvio.tv.core.iptv.IptvCatalogFreshness.stale(cacheCheckedAt[acc.id], acc.autoRefreshHours, System.currentTimeMillis())) {
+            catalogEpochs[acc.id] = catalogEpoch(acc.id) + 1L
+            inFlightCategories.removeAll { it.startsWith("${acc.id}|") }
+            categoriesCache.keys.removeAll { it.startsWith("${acc.id}|") }
+            itemsCache.keys.removeAll { it.startsWith("${acc.id}|") }
+            cacheCheckedAt[acc.id] = System.currentTimeMillis()
+        }
         // A file playlist synced from another device has no local copy (file contents don't
         // sync) — say so instead of a misleading empty "Nothing here".
         if (acc.isM3UFile() && !fileStore.exists(acc.id)) {
@@ -352,19 +379,23 @@ class XtreamHubViewModel @Inject constructor(
             return
         }
         _uiState.update { it.copy(categoriesLoad = BoundedLoad.begin(LoadSurface.HUB_CATEGORIES), error = null) }
+        val epoch = catalogEpoch(acc.id)
         viewModelScope.launch {
             // Xtream reads its section rows from the local catalog once it's built (P7, item 4) —
             // no per-session category fetch. Index absent (first run): fall through to the live
             // API below (the warm-up is building it for next time).
             if (acc.isXtream()) {
+                viewModelScope.launch { resolver.ensureIndexed(acc, section.matchKind) }
                 val stored = runCatching {
                     matchIndex.categoriesFor(acc.id, section.matchKind).map { (id, name) -> XtreamCategory(id, name) }
                 }.getOrDefault(emptyList())
+                if (catalogEpoch(acc.id) != epoch) return@launch
                 if (stored.isNotEmpty()) {
                     categoriesCache[catKey] = stored
                     val visible = stored.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
                     if (isCurrent(acc.id, section)) {
                         _uiState.update { it.copy(categories = visible, categoriesLoad = LoadStatus.Loaded) }
+                        healRows()
                     }
                     return@launch
                 }
@@ -389,12 +420,13 @@ class XtreamHubViewModel @Inject constructor(
                 }.getOrThrow()
             }
             // A slow answer for a section the viewer already left must not paint over the new one.
-            if (!isCurrent(acc.id, section)) return@launch
+            if (catalogEpoch(acc.id) != epoch || !isCurrent(acc.id, section)) return@launch
             val cats = outcome.valueOrNull()
             if (cats != null) {
                 categoriesCache[catKey] = cats
                 val visible = cats.filter { acc.allowsCategory(section.typeKey, it.id, it.name) }
                 _uiState.update { it.copy(categories = visible, categoriesLoad = if (visible.isEmpty()) LoadStatus.Empty else LoadStatus.Loaded) }
+                healRows()
                 return@launch
             }
             // The raw message used to land on screen verbatim: a provider's Cloudflare block
@@ -461,17 +493,18 @@ class XtreamHubViewModel @Inject constructor(
         if (key in inFlightCategories) return
         if (prefetch && inFlightCategories.size >= MAX_OUTSTANDING_CATEGORY_LOADS) return
         inFlightCategories.add(key)
+        val epoch = catalogEpoch(acc.id)
         viewModelScope.launch {
             var settled = false
             try {
                 categoryLoadGate.withPermit {
-                    fetchCategoryItems(acc, section, categoryId, key, prefetch)
+                    fetchCategoryItems(acc, section, categoryId, key, prefetch, epoch)
                     settled = true
                 }
             } finally {
-                inFlightCategories.remove(key)
+                if (catalogEpoch(acc.id) == epoch) inFlightCategories.remove(key)
                 // Cancelled before it settled: never strand the row as "loading".
-                if (!settled && isCurrent(acc.id, section) && _uiState.value.rowLoads[categoryId] is LoadStatus.Loading) {
+                if (!settled && catalogEpoch(acc.id) == epoch && isCurrent(acc.id, section) && _uiState.value.rowLoads[categoryId] is LoadStatus.Loading) {
                     _uiState.update { it.copy(rowLoads = it.rowLoads - categoryId) }
                 }
             }
@@ -495,6 +528,7 @@ class XtreamHubViewModel @Inject constructor(
         if (_uiState.value.hasMoreByCategory[categoryId] != true) return
         val key = "${acc.id}|$section|$categoryId"
         if (!inFlightCategories.add(key)) return
+        val epoch = catalogEpoch(acc.id)
         viewModelScope.launch {
             try {
                 val existing = itemsCache[key].orEmpty()
@@ -508,6 +542,7 @@ class XtreamHubViewModel @Inject constructor(
                 // overlapping its pages) would append dupes, grow the row, re-trigger, and spin
                 // forever — the "category rotating on a loop" bug. Only NEW ids extend the row, and
                 // a window that adds nothing new ends paging.
+                if (catalogEpoch(acc.id) != epoch) return@launch
                 val seen = existing.mapTo(HashSet(existing.size)) { it.cardId }
                 val fresh = more.filter { it.cardId !in seen }
                 val merged = existing + fresh
@@ -522,7 +557,7 @@ class XtreamHubViewModel @Inject constructor(
                     }
                 }
             } finally {
-                inFlightCategories.remove(key)
+                if (catalogEpoch(acc.id) == epoch) inFlightCategories.remove(key)
             }
         }
     }
@@ -702,7 +737,9 @@ class XtreamHubViewModel @Inject constructor(
         categoryId: String,
         key: String,
         prefetch: Boolean = false,
+        epoch: Long,
     ) {
+        if (catalogEpoch(acc.id) != epoch) return
         // The row's deadline starts with its permit: rows queued behind the slots wait on us, not the provider.
         if (isCurrent(acc.id, section)) {
             _uiState.update { it.copy(rowLoads = it.rowLoads + (categoryId to BoundedLoad.begin(LoadSurface.HUB_ROW))) }
@@ -712,6 +749,7 @@ class XtreamHubViewModel @Inject constructor(
             isEmpty = { it.first.isEmpty() },
             report = mapOf("source_type" to acc.sourceType, "section" to section.name.lowercase()),
         ) { fetchWindow(acc, section, categoryId, offset = 0, prefetch = prefetch) }
+        if (catalogEpoch(acc.id) != epoch) return
         val window = outcome.valueOrNull()
         if (window == null) {
             // Failed or timed out: the row STAYS, with its Retry tile. Not cached — the next Retry asks again.
