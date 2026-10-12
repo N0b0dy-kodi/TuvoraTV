@@ -332,7 +332,7 @@ private fun HubBrowseContent(
                 itemsIndexed(uiState.categories, key = { _, it -> "${uiState.section}_${it.id}" }) { index, category ->
                     // Keyed on the account/section too: a category id that survives a section
                     // switch would otherwise keep its stale effect and never reload.
-                    LaunchedEffect(uiState.selectedAccountId, uiState.section, category.id) {
+                    LaunchedEffect(uiState.selectedAccountId, uiState.section, category.id, uiState.catalogueGeneration) {
                         onLoadCategory(category.id)
                         // Give the next few rows a head start so they land with posters and names
                         // instead of shimmer. The view model caps how many of these can actually be

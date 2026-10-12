@@ -2,6 +2,7 @@ package com.nuvio.tv.core.iptv.match
 
 import android.content.Context
 import android.util.Log
+import com.nuvio.tv.core.iptv.IptvCatalogFreshness
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamClient
 import com.nuvio.tv.core.iptv.isXtream
@@ -262,11 +263,11 @@ class XtreamTmdbResolver @Inject constructor(
     /**
      * Syncs the SQLite index from the full bulk list when missing or older than the TTL
      * (incremental diff — unchanged titles are validated by fingerprint, not re-indexed).
-     * [force] skips the TTL check and awaits the sync — the auto-refresh worker uses it to
-     * honor the playlist's own refresh interval. Single-flight per provider+kind; failures
+     * [force] skips the freshness check; [awaitRefresh] waits for a due refresh to finish.
+     * The worker awaits only stale kinds and never forces fresh data to download again. Single-flight per provider+kind; failures
      * back off for an hour. Never throws — resolve degrades to whatever index exists.
      */
-    suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind, force: Boolean = false) {
+    suspend fun ensureIndexed(acc: XtreamAccount, kind: MatchKind, force: Boolean = false, awaitRefresh: Boolean = false) {
         val key = "${acc.id}#${kind.slug}"
         // The index-state read is a SQLite query BEFORE the build's own try/catch, on the caller's
         // coroutine (a warm-up launch, a resolve() call, or a headless refresh worker). A
@@ -281,7 +282,7 @@ class XtreamTmdbResolver @Inject constructor(
             is Guarded.Ok -> g.value
             Guarded.Failed -> return
         }
-        if (!force && existing != null && System.currentTimeMillis() - existing < INDEX_TTL_MS) return
+        if (!force && !IptvCatalogFreshness.stale(existing, acc.autoRefreshHours, System.currentTimeMillis())) return
 
         // Durable cross-run backoff (survives an OS kill that bypasses the catch below): if a prior
         // run began this build and never recorded an outcome, defer with bounded backoff instead of
@@ -331,7 +332,7 @@ class XtreamTmdbResolver @Inject constructor(
                             MatchKind.MOVIE -> client.vodCategories(acc)
                             MatchKind.SERIES -> client.seriesCategories(acc)
                             MatchKind.LIVE -> client.liveCategories(acc)
-                        }.getOrNull()
+                        }.getOrThrow()
                         val session = index.beginSync(acc.id, kind)
                         val fetched = when (kind) {
                             MatchKind.MOVIE -> client.vodIndexItemsInto(acc, session::accept).getOrThrow()
@@ -345,14 +346,15 @@ class XtreamTmdbResolver @Inject constructor(
                         check(fetched > 0 || index.builtAt(acc.id, kind) == null) {
                             "panel returned an empty ${kind.slug} list"
                         }
+                        // Category failures must not advance the catalogue freshness stamp.
+                        index.replaceCategories(acc.id, kind, cats.map { c -> c.id to c.name })
                         val stats = session.finish()
-                        cats?.let { index.replaceCategories(acc.id, kind, it.map { c -> c.id to c.name }) }
                         Log.i(TAG, "synced ${kind.slug} index for ${acc.name}: +${stats.added} ~${stats.changed} -${stats.removed} (${stats.total} total)")
                     }
                     reportBuild(kind, itemCount, startedMs, outcome = "ok", detail = null)
                     // The catalog is local now: an IPTV page that gave up waiting re-shows, and its failed
                     // rows are asked once more (BoundedLoad self-heal — an event, never a poll).
-                    com.nuvio.tv.core.iptv.IptvImportProgress.finished(acc.id)
+                    com.nuvio.tv.core.iptv.IptvCatalogChanges.changed(acc.id, kind.name)
                     StartupJournal.record(StartupJournal.OP_INDEX_BUILD, key, token, JournalOutcome.COMPLETED)
                     buildLock.withLock { clearLastFailure(key) }
                 } catch (c: CancellationException) {
@@ -387,7 +389,7 @@ class XtreamTmdbResolver @Inject constructor(
         // A stale-but-present index serves immediately — yesterday's catalog still
         // resolves, and the sync lands in the background. Only a MISSING index (or a
         // forced refresh, which wants the fresh result) is worth blocking the caller for.
-        if (existing != null && !force) return
+        if (existing != null && !force && !awaitRefresh) return
         // await is cancellable (the caller's request may die); the build itself is not
         deferred.await()
     }
@@ -432,8 +434,7 @@ class XtreamTmdbResolver @Inject constructor(
         // Passive staleness ceiling (resolve/search/app-start paths). The auto-refresh worker
         // drives the USER-configured cadence (playlist autoRefreshHours, default 24h) with a
         // cheap incremental sync; this TTL is just the fallback when that's off or never ran.
-        private const val INDEX_TTL_MS = 72 * 60 * 60 * 1000L
-        private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
+            private const val BUILD_BACKOFF_MS = 60 * 60 * 1000L
         private const val BUILD_BACKOFF_PREFS = "xtream_index_build_backoff"
         private const val STARTUP_WARM_DELAY_MS = 10_000L
         private const val NEGATIVE_TTL_MS = 7 * 24 * 60 * 60 * 1000L

@@ -6,6 +6,7 @@ import com.google.gson.JsonObject
 import com.nuvio.tv.core.iptv.IptvClient
 import com.nuvio.tv.core.iptv.XtreamAccount
 import com.nuvio.tv.core.iptv.XtreamAccountInfo
+import com.nuvio.tv.core.iptv.IptvCatalogFreshness
 import com.nuvio.tv.core.iptv.XtreamCategory
 import com.nuvio.tv.core.iptv.XtreamChannel
 import com.nuvio.tv.core.iptv.XtreamEpisode
@@ -224,12 +225,12 @@ class StalkerClient @Inject constructor(
     private suspend fun ensureLineup(acc: XtreamAccount, force: Boolean = false): Boolean {
         val now = System.currentTimeMillis()
         if (!force) {
-            contentDb.builtAt(acc.id)?.takeIf { now - it < LINEUP_TTL_MS }?.let {
+            contentDb.builtAt(acc.id)?.takeIf { !IptvCatalogFreshness.stale(it, acc.autoRefreshHours, now, fallbackHours = 12) }?.let {
                 return contentDb.liveCount(acc.id) > 0
             }
         }
         return liveMutex.withLock {
-            contentDb.builtAt(acc.id)?.takeIf { !force && now - it < LINEUP_TTL_MS }?.let {
+            contentDb.builtAt(acc.id)?.takeIf { !force && !IptvCatalogFreshness.stale(it, acc.autoRefreshHours, now, fallbackHours = 12) }?.let {
                 return@withLock contentDb.liveCount(acc.id) > 0
             }
             val cats = runCatching { categories(acc, "itv", "get_genres").getOrThrow() }.getOrNull()
@@ -1059,10 +1060,7 @@ class StalkerClient @Inject constructor(
         // demand as the row scrolls rather than raising this.
         private const val CATEGORY_ITEMS = 70
 
-        // How long the mirrored live lineup stays fresh. Refreshed ONLY from a foreground browse
-        // (a background Stalker sync would evict the other device on a shared MAC); 12h matches
-        // the M3U catalog's cadence.
-        private const val LINEUP_TTL_MS = 12L * 60 * 60 * 1000
+        // Live lineup freshness follows the playlist interval, from foreground browsing only.
         private const val SEARCH_ITEMS = 100  // search results: a page or two is plenty
 
         // get_epg_info window + snapshot freshness. 3h covers now/next; re-fetched every 30 min so
