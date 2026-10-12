@@ -297,6 +297,7 @@ class XtreamTmdbResolver @Inject constructor(
             if (System.currentTimeMillis() - lastFailedAt(key) < BUILD_BACKOFF_MS) return
             val d = CompletableDeferred<Unit>()
             inFlightBuilds[key] = d
+            index.startBuildProgress(acc.id, hasExistingIndex = existing != null)
             markIndexingLocked(acc.id, +1)
             d to true
         }
