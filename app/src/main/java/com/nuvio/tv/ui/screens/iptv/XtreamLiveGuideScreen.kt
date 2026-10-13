@@ -702,7 +702,10 @@ fun LiveGuide(
                 // on screen) is what makes a multi-press zap legible.
                 val overlayChannel = uiState.focusedChannel
                     ?: uiState.channels.firstOrNull { it.contentId == playingContentId }
-                val overlayEpg = overlayChannel?.let { uiState.epg[it.streamId] }
+                val loadedOverlayEpg = overlayChannel?.let { uiState.epg[it.streamId] }
+                val overlayEpg = remember(loadedOverlayEpg, nowMs) {
+                    loadedOverlayEpg?.let { GuideWindowRows.atTime(it, nowMs) }
+                }
                 val catalog = readyPlayback?.snapshot?.trackCatalog
                 // Same message the docked preview shows; without it a failed tune read "Live".
                 val errorText = playbackErrorText(playbackState, playbackUi?.bottomErrorCode)
@@ -1375,7 +1378,7 @@ internal fun GuideChannelRow(
 /** Right of the video: focused channel's current programme, TiviMate-style — title, time range
  *  with a progress bar and minutes remaining, then the description. */
 @Composable
-private fun PreviewInfoPane(
+internal fun PreviewInfoPane(
     channelName: String?,
     epg: GuideEpg?,
     nowMs: Long,
@@ -1393,7 +1396,8 @@ private fun PreviewInfoPane(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        val now = epg?.now
+        val currentEpg = remember(epg, nowMs) { epg?.let { GuideWindowRows.atTime(it, nowMs) } }
+        val now = currentEpg?.now
         if (previewError != null) {
             // A playback notice for the focused channel — takes the info slot so it never covers
             // the channel grid; the list stays focusable so OK on the channel re-tunes.
@@ -1468,7 +1472,7 @@ private fun PreviewInfoPane(
             )
         }
         Spacer(Modifier.weight(1f))
-        epg?.next?.let { next ->
+        currentEpg?.next?.let { next ->
             Text(
                 text = stringResource(R.string.iptv_guide_next_programme, timeRange(next), next.title),
                 style = MaterialTheme.typography.labelMedium,

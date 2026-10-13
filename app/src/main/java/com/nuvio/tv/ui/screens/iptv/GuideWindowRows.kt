@@ -19,6 +19,15 @@ import com.nuvio.tv.core.iptv.XtreamProgram
  */
 internal object GuideWindowRows {
 
+    /** Live labels follow the clock without fetching or changing the timeline cells. */
+    fun atTime(epg: GuideEpg, nowMs: Long): GuideEpg {
+        // A travelled window may contain history only. Keep the live pair as extra candidates.
+        val candidates = (epg.programmes + listOfNotNull(epg.now, epg.next))
+            .distinctBy { Triple(it.startMs, it.endMs, it.title) }
+        val current = GuideNowNextPolicy.select(candidates, nowMs)
+        return epg.copy(now = current.now, next = current.next)
+    }
+
     /**
      * The stored rows to draw for a window. The channel's catch-up table wins — it carries the
      * panel's per-programme archive marks; the playlist's guide store fills rows that were never
