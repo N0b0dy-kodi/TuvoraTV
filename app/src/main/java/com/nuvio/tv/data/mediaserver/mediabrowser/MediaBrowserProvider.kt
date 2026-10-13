@@ -31,6 +31,7 @@ import java.util.concurrent.ConcurrentHashMap
 import okhttp3.OkHttpClient
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -343,8 +344,32 @@ internal abstract class MediaBrowserProvider(
         )
     }
 
-    override suspend fun candidates(session: ServerSession, itemId: String): List<ServerCandidate> =
-        mapper(session).candidates(item(session, itemId, "MediaSources"))
+    override suspend fun candidates(session: ServerSession, itemId: String): List<ServerCandidate> {
+        val item = item(session, itemId, "MediaSources")
+        val listed = mapper(session).candidates(item)
+        // On-demand servers can omit sources or list only placeholders until PlaybackInfo.
+        // Populated items use their listed versions without another request.
+        if (listed.isNotEmpty() || !VersionListPolicy.needsPlaybackInfo(item.mediaSources)) return listed
+        val info = withTimeoutOrNull(SOURCE_DISCOVERY_TIMEOUT_MS) {
+            playbackInfo(
+                session,
+                itemId,
+                PlaybackInfoRequest(
+                    userId = session.userId,
+                    mediaSourceId = null,
+                    maxStreamingBitrate = MAX_STREAMING_BITRATE,
+                    isPlayback = false,
+                    deviceProfile = deviceProfile(ServerPlayerCapabilities(allowDirectPlay = true)),
+                ),
+            )
+        } ?: throw ServerException(ServerFailure.UNREACHABLE)
+        when (info.errorCode) {
+            null -> Unit
+            "NotAllowed" -> throw ServerException(ServerFailure.FORBIDDEN)
+            else -> throw ServerException(ServerFailure.UNSUPPORTED, info.errorCode)
+        }
+        return mapper(session).candidates(item.copy(mediaSources = info.mediaSources))
+    }
 
     override suspend fun setPlayed(session: ServerSession, itemId: String, played: Boolean) {
         val endpoint = playedEndpoint(session.userId, itemId)
@@ -425,6 +450,11 @@ internal abstract class MediaBrowserProvider(
             enableDirectPlay = request.capabilities.allowDirectPlay,
             deviceProfile = deviceProfile(request.capabilities)
         )
+        val info = playbackInfo(session, itemId, body)
+        return playbackSession(session, request, info, client.deviceId)
+    }
+
+    private suspend fun playbackInfo(session: ServerSession, itemId: String, body: PlaybackInfoRequest): PlaybackInfoResult {
         val response = client.execute(
             method = "POST",
             baseUrl = session.apiRoot,
@@ -440,8 +470,7 @@ internal abstract class MediaBrowserProvider(
             ),
             body = client.json.encodeToString(PlaybackInfoRequest.serializer(), body)
         )
-        val info = client.json.decodeFromString(PlaybackInfoResult.serializer(), response.body)
-        return playbackSession(session, request, info, client.deviceId)
+        return client.json.decodeFromString(PlaybackInfoResult.serializer(), response.body)
     }
 
     internal fun playbackSession(
@@ -661,6 +690,7 @@ internal abstract class MediaBrowserProvider(
 
     private companion object {
         const val API_KEY = "api_key"
+        const val SOURCE_DISCOVERY_TIMEOUT_MS = 30_000L
         const val MAX_STREAMING_BITRATE = 1_000_000_000L
         const val LIST_FIELDS = "Overview,Genres,ProviderIds,PremiereDate"
         const val DETAIL_FIELDS = "Overview,Genres,ProviderIds,People,Studios,PremiereDate,EndDate"
