@@ -56,7 +56,8 @@ internal fun ControlButton(
     upFocusRequester: FocusRequester? = null,
     enabled: Boolean = true,
     onDownKey: (() -> Unit)? = null,
-    onFocused: (() -> Unit)? = null
+    onFocused: (() -> Unit)? = null,
+    contentColor: Color = Color.White
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
@@ -104,7 +105,7 @@ internal fun ControlButton(
         colors = IconButtonDefaults.colors(
             containerColor = Color.Transparent,
             focusedContainerColor = Color.White,
-            contentColor = Color.White,
+            contentColor = contentColor,
             focusedContentColor = Color.Black
         ),
         shape = IconButtonDefaults.shape(shape = CircleShape)

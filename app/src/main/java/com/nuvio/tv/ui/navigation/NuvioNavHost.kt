@@ -1092,6 +1092,7 @@ private fun PlaybackNavHost(
                         }
                     }
                 },
+                onOpenPartyMedia = ::openPartyMedia,
                 onPlaybackEnded = onEnded@{ nextVideoId, nextSeason, nextEpisode, exitReason ->
                     if (returnToLiveGuideOrPop()) return@onEnded
                     val args = backStackEntry.arguments

@@ -179,6 +179,9 @@ data class PlayerUiState(
     val episodeStreamsTitle: String? = null,
     // Stream sources side panel (for switching streams during playback)
     val showSourcesPanel: Boolean = false,
+    val showPartyPanel: Boolean = false,
+    val partyBehind: Boolean = false,
+    val partyBehindMs: Long? = null,
     val isLoadingSourceStreams: Boolean = false,
     val sourceStreamsError: String? = null,
     val sourceAllStreams: List<Stream> = emptyList(),
@@ -344,6 +347,8 @@ sealed class PlayerEvent {
     data class OnEpisodeStreamSelected(val stream: Stream) : PlayerEvent()
     data object OnShowSourcesPanel : PlayerEvent()
     data object OnDismissSourcesPanel : PlayerEvent()
+    data object OnShowPartyPanel : PlayerEvent()
+    data object OnDismissPartyPanel : PlayerEvent()
     data object OnReloadSourceStreams : PlayerEvent()
     data class OnSourceAddonFilterSelected(val addonName: String?) : PlayerEvent()
     data class OnSourceStreamSelected(val stream: Stream) : PlayerEvent()

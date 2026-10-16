@@ -100,6 +100,8 @@ class PlayerRuntimeController(
     internal val playerMemoryBudget: com.nuvio.tv.core.contracts.PlayerMemoryBudget,
     internal val serverPlayback: ServerPlayback,
     internal val serverStreams: ServerStreams,
+    /** Watch party session (upstream #4028); the player applies and publishes its playback. */
+    internal val party: com.nuvio.tv.core.party.PartyRepository,
     savedStateHandle: SavedStateHandle,
     internal val scope: CoroutineScope,
     /** Profile this playback belongs to (episode shuffle state is profile-scoped). */
@@ -250,6 +252,7 @@ class PlayerRuntimeController(
     fun getCurrentHeaders(): Map<String, String> = currentHeaders
 
     fun stopAndRelease() {
+        leavePartyPlayback()
         releasePlayer()
     }
 
@@ -386,6 +389,8 @@ class PlayerRuntimeController(
     internal var frameRateProbeToken: Long = 0L
     internal var hideAspectRatioIndicatorJob: Job? = null
     internal var hideStreamSourceIndicatorJob: Job? = null
+    /** Temporary drift-correction speed while synced to a watch party, or null. */
+    internal var partyRateNudge: Float? = null
     internal var hidePlayerEngineSwitchInfoJob: Job? = null
     internal var hideSubtitleDelayOverlayJob: Job? = null
     internal var subtitleAutoSyncLoadJob: Job? = null

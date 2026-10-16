@@ -75,6 +75,7 @@ class PlayerViewModel @Inject constructor(
     private val playbackActivityTracker: com.nuvio.tv.core.player.PlaybackActivityTracker,
     private val serverPlayback: com.nuvio.tv.data.mediaserver.ServerPlayback,
     private val serverStreams: com.nuvio.tv.data.mediaserver.ServerStreams,
+    partyRepository: com.nuvio.tv.core.party.PartyRepository,
     private val profileManager: com.nuvio.tv.core.profile.ProfileManager,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -131,13 +132,35 @@ class PlayerViewModel @Inject constructor(
         playerMemoryBudget = playerMemoryBudget,
         serverPlayback = serverPlayback,
         serverStreams = serverStreams,
+        party = partyRepository,
         savedStateHandle = savedStateHandle,
         scope = viewModelScope,
         profileId = launchProfileId
     )
 
+    init {
+        controller.bindParty()
+    }
+
     val uiState: StateFlow<PlayerUiState>
         get() = controller.uiState
+
+    val party: com.nuvio.tv.core.party.PartyRepository
+        get() = controller.party
+
+    val canUseParty: Boolean
+        get() = controller.canUseParty
+
+    val partyMedia: com.nuvio.tv.core.party.PartyMedia
+        get() = controller.currentPartyMedia()
+
+    fun startParty() = controller.startParty()
+
+    fun catchUpParty() = controller.catchUpParty()
+
+    fun switchParty() = controller.switchPartyToCurrent()
+
+    fun canSharePartyStream(): Boolean = controller.canSharePartyStream()
 
     val playbackTimeline: StateFlow<PlaybackTimelineState>
         get() = controller.playbackTimeline
