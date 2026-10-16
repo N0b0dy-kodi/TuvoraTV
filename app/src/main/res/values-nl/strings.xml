@@ -1994,6 +1994,7 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">Laden\u2026</string>
     <string name="account_sync_description">Synchroniseer je bibliotheek, kijkvoortgang, add-ons en plug-ins op al je apparaten.</string>
+    <string name="account_sync_restart_note">Synchronisatie verloopt niet in realtime tussen actieve apparaten. Start dit apparaat opnieuw op na het aanmelden of om wijzigingen van elders over te nemen.</string>
     <string name="account_signin_qr_title">Aanmelden met QR</string>
     <string name="account_signin_qr_subtitle">Scan een QR-code en voltooi het aanmelden met je e-mailadres op je telefoon</string>
     <string name="account_signin_email_title">Aanmelden</string>
@@ -3062,8 +3063,6 @@
     <string name="playback_reset_to_default">Standaardwaarden herstellen</string>
     <string name="playback_net_custom">Aangepast netwerk</string>
     <string name="playback_net_custom_sub">Gebruik meerdere parallelle verbindingen om progressieve streams op te halen. Wanneer dit uitstaat, wordt één verbinding gebruikt.</string>
-    <string name="playback_net_http2">HTTP/2 inschakelen</string>
-    <string name="playback_net_http2_sub">Schakel het HTTP/2-protocol in voor netwerkverbindingen, met multiplexing van verzoeken en snellere handshakes.</string>
     <string name="playback_net_parallel">Parallelle verbindingen</string>
     <string name="playback_net_parallel_sub">Gebruik meerdere verbindingen tegelijk om streams op te halen. Schakel dit in als je last hebt van bufferen terwijl je downloadsnelheid ruim voldoende is.</string>
     <string name="playback_net_connection_count">Aantal verbindingen</string>
@@ -3150,5 +3149,5 @@
     <string name="stream_test_video_bitrate">Gemiddelde videobitrate: %1$s</string>
     <string name="stream_test_error_connection">Verbinding mislukt. De link van de laatst afgespeelde stream is mogelijk verlopen of onbereikbaar. Speel de video opnieuw af en probeer het nogmaals.</string>
 
-<string name="auth_qr_phone_hint">Gebruik je telefoon om in te loggen met e-mail/wachtwoord. TV blijft QR-only voor sneller inloggen.</string>
+    <string name="auth_qr_phone_hint">Gebruik je telefoon om in te loggen met e-mail/wachtwoord. TV blijft QR-only voor sneller inloggen.</string>
 </resources>

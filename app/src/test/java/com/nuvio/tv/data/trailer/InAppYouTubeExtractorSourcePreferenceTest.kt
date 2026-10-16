@@ -6,7 +6,7 @@ import org.junit.Test
 
 class InAppYouTubeExtractorSourcePreferenceTest {
 
-    private val extractor = InAppYouTubeExtractor()
+    private val extractor = InAppYouTubeExtractor(canDecodeVideo = { _, _, _, _ -> true })
 
     @Test
     fun `trailers try separate video and audio first, then HLS, then progressive`() {

@@ -1,8 +1,33 @@
 package com.nuvio.tv.data.remote.supabase
 
 import com.nuvio.tv.core.network.SyncBackendSupabaseProvider
+import android.content.Context
+import android.os.SystemClock
+import android.util.Log
+import com.nuvio.tv.data.local.MemberCatalogStorage
+import com.nuvio.tv.domain.model.ServerConfiguration
+import com.nuvio.tv.domain.model.UserProfile
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.storage.Storage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration.Companion.days
 
 data class AvatarCatalogItem(
     val id: String,
@@ -54,6 +79,13 @@ class AvatarRepository @Inject constructor(
         }
         cachedCatalog = catalog
         return catalog
+    }
+
+    suspend fun shareableImageUrl(profile: UserProfile): String? {
+        val storageUrl = "${supabaseProvider.selectedBackend.normalizedSupabaseUrl}/storage/v1/object/"
+        profile.avatarUrl?.trim()?.takeIf { it.startsWith(storageUrl) }?.let { return it }
+        return getAvatarCatalog().firstOrNull { it.id == profile.avatarId }?.imageUrl
+            ?.takeIf { it.startsWith(storageUrl) }
     }
 
     fun getAvatarImageUrl(avatarId: String, catalog: List<AvatarCatalogItem>): String? {

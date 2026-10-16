@@ -29,8 +29,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import com.nuvio.tv.R
-import com.nuvio.tv.core.tracking.TrackingProviderId
 import com.nuvio.tv.core.tracking.visibleTrackingProviders
+import com.nuvio.tv.core.tracking.TrackingProviderId
 import com.nuvio.tv.data.local.MoreLikeThisSourcePreference
 import com.nuvio.tv.data.local.TraktSettingsDataStore
 import com.nuvio.tv.data.local.WatchProgressSource
@@ -43,18 +43,41 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun TrackingSettingsScreen(
+    onBackPress: () -> Unit
+) {
+    val initialFocusRequester = remember { FocusRequester() }
+
+    BackHandler { onBackPress() }
+
+    LaunchedEffect(Unit) {
+        delay(160L)
+        runCatching { initialFocusRequester.requestFocus() }
+    }
+
+    SettingsStandaloneScaffold(
+        title = stringResource(R.string.settings_tracking_title),
+        subtitle = stringResource(R.string.settings_tracking_description),
+        classicContainer = false
+    ) {
+        TrackingSettingsContent(initialFocusRequester = initialFocusRequester)
+    }
+}
+
+@Composable
+fun TrackingSettingsContent(
     traktViewModel: TraktViewModel = hiltViewModel(),
     simklViewModel: SimklSettingsViewModel = hiltViewModel(),
     mdbListViewModel: MdbListTrackerViewModel = hiltViewModel(),
     trackingViewModel: TrackingSettingsViewModel = hiltViewModel(),
-    onBackPress: () -> Unit
+    initialFocusRequester: FocusRequester? = null
 ) {
     val traktState by traktViewModel.uiState.collectAsStateWithLifecycle()
     val simklState by simklViewModel.uiState.collectAsStateWithLifecycle()
     val mdbListState by mdbListViewModel.uiState.collectAsStateWithLifecycle()
     val mdbListLibraryLists by mdbListViewModel.libraryLists.collectAsStateWithLifecycle()
     val trackingState by trackingViewModel.uiState.collectAsStateWithLifecycle()
-    val traktFocusRequester = remember { FocusRequester() }
+    val ownTraktFocusRequester = remember { FocusRequester() }
+    val traktFocusRequester = initialFocusRequester ?: ownTraktFocusRequester
     val simklFocusRequester = remember { FocusRequester() }
     val mdbListFocusRequester = remember { FocusRequester() }
     val libraryFocusRequester = remember { FocusRequester() }
@@ -81,15 +104,6 @@ fun TrackingSettingsScreen(
         showMoreLikeThisSourceDialog ||
         showAnimeIdDialog ||
         showMdbListLibraryListsDialog
-
-    BackHandler(enabled = !hasOverlay) {
-        onBackPress()
-    }
-
-    LaunchedEffect(Unit) {
-        delay(160L)
-        runCatching { traktFocusRequester.requestFocus() }
-    }
 
     LaunchedEffect(
         activeProvider,

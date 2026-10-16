@@ -49,4 +49,10 @@ class ProfileSettingsCredentialPolicyTest {
         assertTrue(profileSettingsKeysKeptOnImport("trakt_settings").isEmpty())
         assertTrue(profileSettingsKeysKeptOnImport("theme_settings").isEmpty())
     }
+
+    @Test
+    fun `4k trailers stay on the device while other trailer settings sync`() {
+        assertTrue(shouldExcludePreferenceFromProfileSettingsSync("trailer_settings", "trailer_allow_4k"))
+        assertFalse(shouldExcludePreferenceFromProfileSettingsSync("trailer_settings", "trailer_enabled"))
+    }
 }

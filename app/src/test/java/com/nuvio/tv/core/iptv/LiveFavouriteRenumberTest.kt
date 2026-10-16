@@ -78,6 +78,8 @@ class LiveFavouriteRenumberTest {
             api = mockk(relaxed = true),
             addonRepository = mockk(relaxed = true),
             pluginManager = mockk(relaxed = true),
+            profileManager = mockk(relaxed = true),
+            debridSettingsDataStore = mockk(relaxed = true),
             tmdbService = mockk(relaxed = true),
             debridStreamPresentation = mockk(relaxed = true),
             localDebridAvailabilityService = mockk(relaxed = true),

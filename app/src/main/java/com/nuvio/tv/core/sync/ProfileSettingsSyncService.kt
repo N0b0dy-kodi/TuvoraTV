@@ -151,6 +151,11 @@ private val localOnlyPlayerProfileSettingsKeys = setOf(
     "live_buffer_seconds"
 )
 
+// 4K trailers depend on the device's RAM, so a choice made on one device must not reach another.
+private val localOnlyTrailerProfileSettingsKeys = setOf(
+    "trailer_allow_4k"
+)
+
 // Third-party provider credentials must never leave the device inside a synced profile-settings
 // blob (privacy). Ported from upstream — the fork previously synced these keys in plaintext.
 private val credentialProfileSettingsKeys = mapOf(
@@ -169,6 +174,7 @@ internal fun shouldExcludePreferenceFromProfileSettingsSync(feature: String, key
         feature == "layout_settings" && keyName in localOnlyLayoutProfileSettingsKeys -> true
         feature == "layout_settings" && keyName == "search_discover_enabled" -> true
         feature == PLAYER_SETTINGS_FEATURE && keyName in localOnlyPlayerProfileSettingsKeys -> true
+        feature == "trailer_settings" && keyName in localOnlyTrailerProfileSettingsKeys -> true
         feature == PluginDataStore.FEATURE && keyName != PluginDataStore.GROUP_STREAMS_BY_REPOSITORY -> true
         keyName in credentialProfileSettingsKeys[feature].orEmpty() -> true
         else -> false
@@ -182,6 +188,7 @@ internal fun shouldExcludePreferenceFromProfileSettingsSync(feature: String, key
 internal fun profileSettingsKeysKeptOnImport(feature: String): Set<String> = when (feature) {
     "layout_settings" -> catalogKeysExcludedFromProfileSettingsBlob + localOnlyLayoutProfileSettingsKeys
     PLAYER_SETTINGS_FEATURE -> localOnlyPlayerProfileSettingsKeys
+    "trailer_settings" -> localOnlyTrailerProfileSettingsKeys
     else -> credentialProfileSettingsKeys[feature].orEmpty()
 }
 

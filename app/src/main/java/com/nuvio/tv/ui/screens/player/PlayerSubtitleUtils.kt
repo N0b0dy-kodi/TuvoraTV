@@ -1,7 +1,11 @@
 package com.nuvio.tv.ui.screens.player
 
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.text.Cue
 import com.nuvio.tv.ui.util.LANGUAGE_OVERRIDES
+import com.nuvio.tv.ui.util.resolveLanguageNameAlias
 
 internal object PlayerSubtitleUtils {
     fun normalizeLanguageCode(lang: String): String {
@@ -37,8 +41,28 @@ internal object PlayerSubtitleUtils {
             return "es"
         }
 
+        if (containsAny("bahasa indonesia", "indonesian", "indonesia")) {
+            return "id"
+        }
+        if (containsAny("bahasa malaysia", "bahasa melayu", "malaysian")) {
+            return "ms"
+        }
+
+        if (containsAny("hbs")) {
+            stripPrefixAndNormalizeLanguageCode(tokenized, "hbs")?.let { return it }
+        }
+
+        resolveLanguageNameAlias(tokenized)?.let { return it }
+
         // LANGUAGE_OVERRIDES uses pt-BR (mixed case) — normalize to lowercase for consistency
-        return LANGUAGE_OVERRIDES[code]?.lowercase() ?: normalizedCode
+        return LANGUAGE_OVERRIDES[code]?.lowercase()
+            ?: LANGUAGE_OVERRIDES[normalizedCode]?.lowercase()
+            ?: normalizedCode
+    }
+
+    private fun stripPrefixAndNormalizeLanguageCode(language: String, prefix: String): String? {
+        val stripped = language.replace(prefix,"").trim()
+        return LANGUAGE_OVERRIDES[stripped]?.lowercase()
     }
 
     fun matchesLanguageCode(language: String?, target: String): Boolean {
@@ -113,6 +137,12 @@ internal object PlayerSubtitleUtils {
             return baseLang
         }
 
+        if (baseLang == "ms" || baseLang == "msa" || baseLang == "may") {
+            val hasIndonesian = INDONESIAN_TAGS.any { haystack.contains(it) }
+            if (hasIndonesian) return "id"
+            return baseLang
+        }
+
         return baseLang
     }
 
@@ -128,6 +158,9 @@ internal object PlayerSubtitleUtils {
     )
     internal val CASTILIAN_TAGS = listOf(
         "es-es", "es_es", "castilian", "castellano", "spain", "españa", "espana", "iberian"
+    )
+    internal val INDONESIAN_TAGS = listOf(
+        "indonesia", "indonesian", "bahasa indonesia"
     )
 
     fun mimeTypeFromUrl(url: String): String {
@@ -145,4 +178,113 @@ internal object PlayerSubtitleUtils {
             else -> MimeTypes.APPLICATION_SUBRIP
         }
     }
+
+    /**
+     * Sniffs subtitle format from body content, falling back to [mimeTypeFromUrl] when ambiguous.
+     * Addon URLs often omit extensions (`/download/12345`), so URL-only mime is frequently wrong.
+     */
+    fun sniffSubtitleMimeType(rawText: String, sourceUrl: String = ""): String {
+        val text = rawText.replace("\uFEFF", "").trimStart()
+        if (text.isEmpty()) return mimeTypeFromUrl(sourceUrl)
+
+        if (text.startsWith("WEBVTT", ignoreCase = true)) {
+            return MimeTypes.TEXT_VTT
+        }
+
+        val head = text.take(4_000)
+        if (
+            head.startsWith("[Script Info]", ignoreCase = true) ||
+            head.contains("[V4+ Styles]", ignoreCase = true) ||
+            head.contains("[V4 Styles]", ignoreCase = true) ||
+            Regex("""(?im)^\s*Dialogue:""").containsMatchIn(head)
+        ) {
+            return MimeTypes.TEXT_SSA
+        }
+
+        val lowerHead = head.lowercase()
+        if (
+            (lowerHead.startsWith("<?xml") || lowerHead.contains("<tt ")) &&
+            (lowerHead.contains("ttml") || lowerHead.contains(":tt") || lowerHead.contains("<tt "))
+        ) {
+            return MimeTypes.APPLICATION_TTML
+        }
+
+        // SRT: optional index line + HH:MM:SS,mmm --> HH:MM:SS,mmm
+        if (
+            Regex(
+                """(?m)^\d+\s*\r?\n\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}"""
+            ).containsMatchIn(text.take(800)) ||
+            Regex(
+                """(?m)^\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}"""
+            ).containsMatchIn(text.take(400))
+        ) {
+            return MimeTypes.APPLICATION_SUBRIP
+        }
+
+        return mimeTypeFromUrl(sourceUrl)
+    }
+
+    /**
+     * Ordered mime candidates for robust sidecar parsing: sniffed content first, then URL hint,
+     * then common text formats.
+     */
+    fun sidecarMimeCandidates(rawText: String, sourceUrl: String): List<String> {
+        val sniffed = sniffSubtitleMimeType(rawText, sourceUrl)
+        val fromUrl = mimeTypeFromUrl(sourceUrl)
+        return linkedSetOf(
+            sniffed,
+            fromUrl,
+            MimeTypes.APPLICATION_SUBRIP,
+            MimeTypes.TEXT_VTT,
+            MimeTypes.TEXT_SSA,
+            MimeTypes.APPLICATION_TTML
+        ).toList()
+    }
+
+    /**
+     * Merges simultaneously active unpositioned text cues into a single multi-line cue
+     * to prevent Media3 SubtitlePainter from drawing colliding lines on top of each other.
+     */
+    fun mergeOverlappingCues(cues: List<Cue>): List<Cue> {
+        if (cues.size <= 1) return cues
+        val unpositioned = cues.filter { it.bitmap == null && it.line == Cue.DIMEN_UNSET }
+        if (unpositioned.size <= 1) return cues
+        if (unpositioned.size < cues.size) {
+            val positioned = cues.filterNot { it.bitmap == null && it.line == Cue.DIMEN_UNSET }
+            return positioned + mergeOverlappingCues(unpositioned)
+        }
+        val validTexts = cues.mapNotNull { it.text }.filter { it.isNotBlank() }
+        if (validTexts.isEmpty()) return emptyList()
+
+        val hasSpanned = validTexts.any { it is Spanned }
+        val mergedText: CharSequence = if (hasSpanned) {
+            val builder = SpannableStringBuilder()
+            for (i in validTexts.indices) {
+                if (i > 0) builder.append('\n')
+                builder.append(validTexts[i])
+            }
+            builder
+        } else {
+            validTexts.distinct().joinToString("\n")
+        }
+        return listOf(cues[0].buildUpon().setText(mergedText).build())
+    }
+
+    fun normalizeBottomCuePosition(cue: Cue): Cue {
+        if (cue.bitmap != null || cue.verticalType != Cue.TYPE_UNSET || cue.line == Cue.DIMEN_UNSET) {
+            return cue
+        }
+        val placedAwayFromBottom = when (cue.lineType) {
+            Cue.LINE_TYPE_FRACTION -> cue.line < BOTTOM_CUE_LINE_FRACTION
+            Cue.LINE_TYPE_NUMBER -> cue.line >= 0f
+            else -> false
+        }
+        if (placedAwayFromBottom) return cue
+        return cue.buildUpon()
+            .setLine(Cue.DIMEN_UNSET, Cue.TYPE_UNSET)
+            .setLineAnchor(Cue.TYPE_UNSET)
+            .build()
+    }
+
+    private const val BOTTOM_CUE_LINE_FRACTION = 0.6f
 }
