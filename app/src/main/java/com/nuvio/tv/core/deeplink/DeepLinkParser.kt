@@ -1,6 +1,7 @@
 package com.nuvio.tv.core.deeplink
 
 import com.nuvio.tv.core.party.PARTY_CODE_LENGTH
+import com.nuvio.tv.core.party.PARTY_INVITE_HOST
 import com.nuvio.tv.core.party.normalizePartyCode
 import com.nuvio.tv.domain.deeplink.AppDeepLink
 import java.net.URI
@@ -18,6 +19,7 @@ object DeepLinkParser {
                 null
             }
         }
+        if (scheme == "https" || scheme == "http") return parseWebPartyLink(parsedUrl)
         if (scheme != "nuvio") return null
 
         val host = parsedUrl.host?.lowercase().orEmpty()
@@ -48,6 +50,20 @@ object DeepLinkParser {
                 }
             }
         }
+    }
+
+    /** `https://tuvora.co/party/<code>` (the invite link and QR). Any other web link is not ours. */
+    private fun parseWebPartyLink(parsedUrl: URI): AppDeepLink? {
+        val host = parsedUrl.host?.lowercase().orEmpty()
+        if (host != PARTY_INVITE_HOST && host != "www.$PARTY_INVITE_HOST") return null
+        val segments = parsedUrl.rawPath
+            ?.split("/")
+            .orEmpty()
+            .mapNotNull { segment -> decode(segment).trim().takeIf(String::isNotBlank) }
+        if (segments.size != 2 || !segments[0].equals("party", ignoreCase = true)) return null
+        return normalizePartyCode(segments[1])
+            .takeIf { it.length == PARTY_CODE_LENGTH }
+            ?.let(AppDeepLink::Party)
     }
 
     private fun parseMetaFromParameters(parsedUrl: URI): AppDeepLink.Meta? {

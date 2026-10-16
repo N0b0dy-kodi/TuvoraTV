@@ -733,7 +733,7 @@ class PartyRepository @Inject constructor(
 /** The link encoded in the invite QR and shared with friends. */
 fun partyInviteLink(code: String, isCustomServer: Boolean): String {
     val normalized = normalizePartyCode(code)
-    return if (isCustomServer) "nuvio://party/$normalized" else "https://nuvio.tv/party/$normalized"
+    return if (isCustomServer) "nuvio://party/$normalized" else "https://$PARTY_INVITE_HOST/party/$normalized"
 }
 
 /** The name other members see: the active profile's, else the app's. */
@@ -741,7 +741,10 @@ fun partyDisplayName(profileName: String?): String =
     profileName?.trim()?.takeIf { it.isNotEmpty() }?.take(PARTY_NAME_LIMIT) ?: PARTY_DEFAULT_NAME
 
 private const val PARTY_NAME_LIMIT = 40
-private const val PARTY_DEFAULT_NAME = "Nuvio"
+private const val PARTY_DEFAULT_NAME = "Tuvora"
+
+/** The web host of Tuvora invite links (also the App Link host in the manifest). */
+const val PARTY_INVITE_HOST = "tuvora.co"
 
 fun normalizePartyCode(input: String): String =
     input.uppercase().filter { it in PARTY_CODE_ALPHABET }

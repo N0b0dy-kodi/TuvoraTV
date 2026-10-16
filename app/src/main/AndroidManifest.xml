@@ -121,6 +121,17 @@
 
                 <data android:scheme="stremio" />
             </intent-filter>
+            <!-- Watch party invites (QR / shared link). Verification needs tuvora.co/.well-known/assetlinks.json. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="https" />
+                <data android:host="tuvora.co" />
+                <data android:pathPrefix="/party/" />
+            </intent-filter>
         </activity>
 
         <activity
