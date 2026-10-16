@@ -84,8 +84,9 @@ class PartyApi @Inject constructor(
     internal suspend fun clock(): Long =
         postgrest.rpc("watch_party_clock").data.trim().toLong()
 
-    internal suspend fun enabled(): Boolean =
-        postgrest.rpc("watch_party_enabled").data.trim().toBooleanStrict()
+    /** Raw body of the kill switch; [PartyAvailabilityPolicy.classifyBody] reads it. */
+    internal suspend fun enabledBody(): String =
+        postgrest.rpc("watch_party_enabled").data
 
     private suspend fun call(function: String, params: JsonObject): PartySnapshot {
         val body = postgrest.rpc(function, params).data

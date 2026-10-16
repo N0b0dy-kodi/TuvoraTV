@@ -8,6 +8,15 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** What the official Tuvora backend supports. */
+internal val OFFICIAL_SERVER_CAPABILITIES = ServerCapabilities(
+    emailPasswordAuth = false,
+    tvLogin = true,
+    // On for the official backend. If its watch_party_* RPCs are missing (PGRST202), the
+    // watch_party_enabled probe turns the feature off at runtime (PartyAvailabilityPolicy).
+    watchParty = true
+)
+
 @Singleton
 class ServerConfigurationStore @Inject constructor(
     @param:ApplicationContext private val context: Context
@@ -62,11 +71,7 @@ class ServerConfigurationStore @Inject constructor(
     private fun officialConfiguration() = ServerConfiguration(
         backendUrl = BuildConfig.SUPABASE_URL.trimEnd('/'),
         publishableKey = BuildConfig.SUPABASE_ANON_KEY,
-        capabilities = ServerCapabilities(
-            emailPasswordAuth = false,
-            tvLogin = true,
-            watchParty = false // Tuvora self-host backend has no Watch Party RPCs.
-        ),
+        capabilities = OFFICIAL_SERVER_CAPABILITIES,
         isCustom = false,
         fallbackBackendUrl = BuildConfig.SUPABASE_FALLBACK_URL.trim().trimEnd('/').takeIf { it.isNotBlank() },
         tvLoginWebBaseUrl = BuildConfig.TV_LOGIN_WEB_BASE_URL,

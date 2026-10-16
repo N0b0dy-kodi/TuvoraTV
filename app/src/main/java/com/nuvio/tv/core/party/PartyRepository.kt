@@ -7,6 +7,7 @@ import com.nuvio.tv.core.sync.SyncClientIdentity
 import com.nuvio.tv.data.remote.supabase.AvatarRepository
 import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.domain.model.ServerConfiguration
+import io.github.jan.supabase.postgrest.exception.PostgrestRestException
 import io.github.jan.supabase.realtime.Presence
 import io.github.jan.supabase.realtime.Realtime
 import kotlinx.coroutines.CancellationException
@@ -126,8 +127,20 @@ class PartyRepository @Inject constructor(
 
     fun refreshAvailability() {
         scope.launch {
-            if (!serverConfiguration.capabilities.watchParty) return@launch
-            val enabled = runRemote { api.enabled() } ?: return@launch
+            val capability = serverConfiguration.capabilities.watchParty
+            if (!capability) return@launch
+            val probe = try {
+                PartyAvailabilityPolicy.classifyBody(api.enabledBody())
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: PostgrestRestException) {
+                Log.w(TAG, "Watch party availability check failed (${error.code})")
+                PartyAvailabilityPolicy.classifyFailure(error.code, error.statusCode)
+            } catch (error: Throwable) {
+                Log.w(TAG, "Watch party availability check failed", error)
+                PartyAvailabilityProbe.Unreachable
+            }
+            val enabled = PartyAvailabilityPolicy.next(capability, _available.value, probe)
             _available.value = enabled
             if (!enabled) finish(PartyEvent.Ended)
         }
@@ -653,7 +666,7 @@ class PartyRepository @Inject constructor(
         val profile = profileManager.activeProfile
         return PartyIdentity(
             deviceId = deviceId(),
-            displayName = profile?.name?.trim()?.takeIf { it.isNotEmpty() }?.take(40) ?: DEFAULT_NAME,
+            displayName = partyDisplayName(profile?.name),
             avatarUrl = profile?.let { avatarRepository.shareableImageUrl(it) }?.takeIf { it.startsWith("https://") && it.length <= 512 },
             avatarColor = profile?.avatarColorHex?.takeIf { COLOR_PATTERN.matches(it) },
         )
@@ -700,13 +713,12 @@ class PartyRepository @Inject constructor(
             maxMembers = info.maxMembers,
             connected = false,
             hostOnly = info.hostOnly,
-            inviteLink = if (serverConfiguration.isCustom) "nuvio://party/${info.code}" else "https://nuvio.tv/party/${info.code}",
+            inviteLink = partyInviteLink(info.code, serverConfiguration.isCustom),
         )
     }
 
     private companion object {
         const val TAG = "Party"
-        const val DEFAULT_NAME = "Nuvio"
         val COLOR_PATTERN = Regex("^#[0-9A-Fa-f]{6}$")
         val HEARTBEAT_INTERVAL = 2.minutes
         val PERSIST_DELAY = 1.5.seconds
@@ -717,6 +729,19 @@ class PartyRepository @Inject constructor(
         const val CLOCK_SAMPLES = 4
     }
 }
+
+/** The link encoded in the invite QR and shared with friends. */
+fun partyInviteLink(code: String, isCustomServer: Boolean): String {
+    val normalized = normalizePartyCode(code)
+    return if (isCustomServer) "nuvio://party/$normalized" else "https://nuvio.tv/party/$normalized"
+}
+
+/** The name other members see: the active profile's, else the app's. */
+fun partyDisplayName(profileName: String?): String =
+    profileName?.trim()?.takeIf { it.isNotEmpty() }?.take(PARTY_NAME_LIMIT) ?: PARTY_DEFAULT_NAME
+
+private const val PARTY_NAME_LIMIT = 40
+private const val PARTY_DEFAULT_NAME = "Nuvio"
 
 fun normalizePartyCode(input: String): String =
     input.uppercase().filter { it in PARTY_CODE_ALPHABET }
