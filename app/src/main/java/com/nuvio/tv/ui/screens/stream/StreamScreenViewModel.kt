@@ -148,7 +148,7 @@ class StreamScreenViewModel @Inject constructor(
         ?.toBooleanStrictOrNull()
         ?: false
     private val streamCacheKey: String = "${contentType.lowercase()}|$videoId"
-    private val partyKey: String = com.nuvio.tv.core.party.partyMediaKey(
+    private val partyKey: String = party.playerKey(
         metaType = contentType,
         metaId = contentId ?: videoId.substringBefore(":"),
         season = season,

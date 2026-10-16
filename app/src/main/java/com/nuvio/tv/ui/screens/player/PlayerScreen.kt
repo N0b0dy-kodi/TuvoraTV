@@ -127,6 +127,7 @@ import com.nuvio.tv.core.party.PartyMedia
 import com.nuvio.tv.core.party.PartyNotice
 import com.nuvio.tv.core.party.PartySync
 import com.nuvio.tv.ui.screens.party.PartyPanel
+import com.nuvio.tv.ui.screens.party.openPartyMedia
 import com.nuvio.tv.ui.screens.party.PartyStatusPill
 import com.nuvio.tv.ui.screens.detail.formatPlaybackTime
 import androidx.compose.material.icons.rounded.Groups
@@ -1409,9 +1410,11 @@ fun PlayerScreen(
                     onSwitchParty = { viewModel.switchParty() },
                     onWatchWithParty = {
                         partyState.party?.media?.let { media ->
-                            viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
-                            viewModel.stopAndRelease()
-                            onOpenPartyMedia(media)
+                            openPartyMedia(context, viewModel.party, media) { local ->
+                                viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
+                                viewModel.stopAndRelease()
+                                onOpenPartyMedia(local)
+                            }
                         }
                     },
                     onLeave = {

@@ -33,9 +33,11 @@ data class PartyMedia(
     val background: String? = null,
     val logo: String? = null,
     val source: PartySource? = null,
+    /** A media-server title's account-independent identity (null for catalog titles); older clients ignore it. */
+    val server: PartyServerRef? = null,
 ) {
     val key: String
-        get() = partyMediaKey(metaType, metaId, season, episode)
+        get() = partyMediaKey(metaType, server?.let(PartyServerTitleMatch::portableId) ?: metaId, season, episode)
 }
 
 @Serializable

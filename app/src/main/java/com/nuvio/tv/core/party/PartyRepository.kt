@@ -4,6 +4,7 @@ import android.util.Log
 import com.nuvio.tv.core.auth.AuthManager
 import com.nuvio.tv.core.profile.ProfileManager
 import com.nuvio.tv.core.sync.SyncClientIdentity
+import com.nuvio.tv.data.mediaserver.ServerRepository
 import com.nuvio.tv.data.remote.supabase.AvatarRepository
 import com.nuvio.tv.domain.model.AuthState
 import com.nuvio.tv.domain.model.ServerConfiguration
@@ -59,6 +60,7 @@ class PartyRepository @Inject constructor(
     private val avatarRepository: AvatarRepository,
     private val syncClientIdentity: SyncClientIdentity,
     private val serverConfiguration: ServerConfiguration,
+    private val serverRepository: ServerRepository,
 ) {
     private val dispatcher = Dispatchers.Default.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
@@ -147,7 +149,19 @@ class PartyRepository @Inject constructor(
     }
 
     suspend fun create(media: PartyMedia): PartyError? =
-        start { identity -> api.create(identity, media, null) }
+        start { identity -> api.create(identity, withServer(media), null) }
+
+    /** The party key of what a player shows; media-server titles by their server identity. */
+    fun playerKey(metaType: String, metaId: String, season: Int?, episode: Int?): String =
+        PartyServerTitleMatch.playerKey(metaType, metaId, season, episode, serverRepository.uiState.value.connections)
+
+    /** [media] plus its media-server identity when it is one of this device's server titles. */
+    fun withServer(media: PartyMedia): PartyMedia =
+        PartyServerTitleMatch.withServer(media, serverRepository.uiState.value.connections)
+
+    /** What this device plays for the party's [media]: its own server record, or "not connected". */
+    fun localize(media: PartyMedia): PartyServerResolution =
+        PartyServerTitleMatch.localize(media, serverRepository.uiState.value.connections)
 
     suspend fun join(code: String): PartyError? =
         start { identity -> api.join(normalizePartyCode(code), identity) }
@@ -225,7 +239,8 @@ class PartyRepository @Inject constructor(
         scope.launch { publish(paused = paused, positionMs = positionMs, rate = rate, waiting = false, at = at) }
     }
 
-    fun publishMedia(media: PartyMedia, positionMs: Long) {
+    fun publishMedia(localMedia: PartyMedia, positionMs: Long) {
+        val media = withServer(localMedia)
         scope.launch {
             val party = _state.value.party ?: return@launch
             if (media == party.media || !party.isHost) return@launch

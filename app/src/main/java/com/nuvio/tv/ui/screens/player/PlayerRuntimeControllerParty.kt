@@ -15,7 +15,6 @@ import com.nuvio.tv.core.party.PartySync
 import com.nuvio.tv.core.party.PartyTickAction
 import com.nuvio.tv.core.party.PartyTickInput
 import com.nuvio.tv.core.party.PartyTickState
-import com.nuvio.tv.core.party.partyMediaKey
 import com.nuvio.tv.ui.screens.party.messageRes
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -39,7 +38,7 @@ import android.os.SystemClock
  */
 
 internal val PlayerRuntimeController.partyKey: String
-    get() = partyMediaKey(contentType.orEmpty(), contentId.orEmpty(), currentSeason, currentEpisode)
+    get() = party.playerKey(contentType.orEmpty(), contentId.orEmpty(), currentSeason, currentEpisode)
 
 internal val PlayerRuntimeController.isOwnSourceContent: Boolean
     get() = OwnSourcePolicy.isOwnContentId(contentId) || OwnSourcePolicy.isOwnContentId(currentVideoId)
@@ -133,7 +132,9 @@ internal fun PlayerRuntimeController.catchUpParty() {
     setPartyBehind(false)
 }
 
-internal fun PlayerRuntimeController.currentPartyMedia(): PartyMedia = PartyMedia(
+internal fun PlayerRuntimeController.currentPartyMedia(): PartyMedia = party.withServer(localPartyMedia())
+
+private fun PlayerRuntimeController.localPartyMedia(): PartyMedia = PartyMedia(
     type = contentType.orEmpty(),
     metaId = contentId.orEmpty(),
     metaType = contentType.orEmpty(),

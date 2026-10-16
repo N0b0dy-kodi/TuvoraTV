@@ -36,6 +36,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
@@ -88,6 +89,7 @@ fun PartyScreen(
     viewModel: PartyViewModel = hiltViewModel(),
 ) {
     val repository = viewModel.party
+    val context = LocalContext.current
     val state by repository.state.collectAsStateWithLifecycle()
     val party = state.party
     var joined by remember { mutableStateOf<ActiveParty?>(null) }
@@ -109,7 +111,7 @@ fun PartyScreen(
     LaunchedEffect(joined) {
         val current = joined ?: return@LaunchedEffect
         delay(1600)
-        onWatch(current.media)
+        openPartyMedia(context, repository, current.media, onWatch)
         joined = null
     }
 
@@ -484,6 +486,7 @@ private fun PartyContent(
     party: ActiveParty,
     onWatch: (PartyMedia) -> Unit,
 ) {
+    val context = LocalContext.current
     val listState = rememberLazyListState()
     val watchFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { watchFocusRequester.requestFocusAfterFrames() }
@@ -521,7 +524,7 @@ private fun PartyContent(
                         SettingsActionRow(
                             title = stringResource(R.string.party_watch_with_party),
                             subtitle = null,
-                            onClick = { onWatch(party.media) },
+                            onClick = { openPartyMedia(context, repository, party.media, onWatch) },
                             leadingIcon = Icons.Rounded.PlayArrow,
                             modifier = Modifier.focusRequester(watchFocusRequester),
                         )
