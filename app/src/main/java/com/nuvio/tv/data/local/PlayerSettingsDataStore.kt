@@ -1570,7 +1570,12 @@ class PlayerSettingsDataStore @Inject constructor(
         store().edit { it[enableHttp2Key] = enabled }
     }
 
-    suspend fun setVodCacheEnabled(enabled: Boolean) { store().edit { it[vodCacheEnabledKey] = enabled } }
+    suspend fun setVodCacheEnabled(enabled: Boolean) {
+        store().edit { prefs ->
+            prefs[vodCacheEnabledKey] = enabled
+            if (enabled) prefs[backBufferDurationMsKey] = 0
+        }
+    }
     suspend fun setVodCacheSizeMode(mode: VodCacheSizeMode) { store().edit { it[vodCacheSizeModeKey] = mode.name } }
     suspend fun setVodCacheSizeMb(mb: Int) { store().edit { it[vodCacheSizeMbKey] = mb.coerceIn(PlayerSettings.MIN_VOD_CACHE_SIZE_MB, PlayerSettings.MAX_VOD_CACHE_SIZE_MB) } }
     suspend fun setUseParallelConnections(enabled: Boolean) { store().edit { it[useParallelConnectionsKey] = enabled } }

@@ -47,6 +47,15 @@ import kotlinx.coroutines.launch
 import java.net.URLEncoder
 import javax.inject.Inject
 
+import com.nuvio.tv.core.plugin.resolvePluginSeasonEpisode
+import com.nuvio.tv.core.profile.ProfileManager
+import com.nuvio.tv.data.local.DebridSettingsDataStore
+import com.nuvio.tv.data.mediaserver.ServerStreamSource
+import com.nuvio.tv.domain.model.DebridSettings
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.transformLatest
+import java.security.MessageDigest
+
 private const val TAG = "StreamRepositoryImpl"
 
 class StreamRepositoryImpl @Inject constructor(
@@ -54,6 +63,8 @@ class StreamRepositoryImpl @Inject constructor(
     private val api: AddonApi,
     private val addonRepository: AddonRepository,
     private val pluginManager: PluginManager,
+    private val profileManager: ProfileManager,
+    private val debridSettingsDataStore: DebridSettingsDataStore,
     private val tmdbService: TmdbService,
     private val debridStreamPresentation: DebridStreamPresentation,
     private val localDebridAvailabilityService: LocalDebridAvailabilityService,
@@ -69,6 +80,7 @@ class StreamRepositoryImpl @Inject constructor(
     // When paused, local (installed-plugin) stream search is skipped so an IPTV/direct play
     // does not also fire a redundant addon scrape. Fork-appropriate one-shot gate (checked at
     // search time) vs upstream's reactive flow — same intent, this codebase's semantics.
+    private val streamSearchSessions = StreamSearchSessionCache()
     private val localPluginSearchPaused = MutableStateFlow(false)
 
     override fun setLocalPluginSearchPaused(paused: Boolean) {
@@ -84,6 +96,16 @@ class StreamRepositoryImpl @Inject constructor(
         val addonName: String,
         val kind: StreamFailureKind,
         val detail: String
+    )
+
+    private data class StreamSourceConfigurationSnapshot(
+        val profileId: Int,
+        val addons: List<Addon>,
+        val pluginsEnabled: Boolean,
+        val enabledScrapers: List<ScraperInfo>,
+        val groupPluginsByRepository: Boolean,
+        val pluginRepositories: List<PluginRepository>,
+        val debridSettings: DebridSettings
     )
 
     /**
@@ -238,13 +260,102 @@ class StreamRepositoryImpl @Inject constructor(
             return@flow
         }
 
+        val sourceConfiguration = captureSourceConfiguration()
+        val isNativeServerRequest = serverStreams.isNativeRequest(videoId)
+        val requestKey = buildStreamSearchRequestKey(sourceConfiguration, type, videoId, season, episode)
+
+        val producer = {
+            fetchStreamsFromAllSources(
+                type = type, videoId = videoId, season = season, episode = episode,
+                addons = if (isNativeServerRequest) emptyList() else sourceConfiguration.addons,
+                debridSettings = sourceConfiguration.debridSettings,
+                hasCompatiblePlugins = !isNativeServerRequest && sourceConfiguration.pluginsEnabled &&
+                    sourceConfiguration.enabledScrapers.any { it.supportsType(type) },
+                serverSources = serverStreams.sources(type, videoId, season, episode, forceRefresh)
+            )
+        }
+        // Own-source matching can mint single-use links and has its own refresh policy.
+        // Keep those searches scoped to their collector; reuse upstream searches only.
+        if (hasForkMatchSources(type)) emitAll(producer())
+        else emitAll(streamSearchSessions.observe(requestKey, forceRefresh, producer))
+    }
+
+    private suspend fun hasForkMatchSources(type: String): Boolean =
+        xtreamAccountStore.accounts.first().any { it.enabled } || sourceStreams.matchSourceGroups(type).isNotEmpty()
+
+    override suspend fun getCachedStreamsFromAllAddons(
+        type: String, videoId: String, season: Int?, episode: Int?
+    ): List<AddonStreams>? {
+        if (sourceStreams.isHandledId(videoId) || xtreamRegistry.isXtreamId(videoId) || hasForkMatchSources(type)) return null
+        return streamSearchSessions.peek(buildStreamSearchRequestKey(captureSourceConfiguration(), type, videoId, season, episode))
+    }
+
+    private fun buildStreamSearchRequestKey(
+        sourceConfiguration: StreamSourceConfigurationSnapshot,
+        type: String,
+        videoId: String,
+        season: Int?,
+        episode: Int?
+    ): StreamSearchRequestKey = StreamSearchRequestKey(
+        profileId = sourceConfiguration.profileId,
+        type = type.lowercase(),
+        videoId = videoId,
+        season = season,
+        episode = episode,
+        sourceConfiguration = buildSourceConfigurationKey(
+            addons = sourceConfiguration.addons,
+            pluginsEnabled = sourceConfiguration.pluginsEnabled,
+            enabledScrapers = sourceConfiguration.enabledScrapers,
+            groupPluginsByRepository = sourceConfiguration.groupPluginsByRepository,
+            pluginRepositories = sourceConfiguration.pluginRepositories,
+            debridPresentationConfiguration = sourceConfiguration.debridSettings
+                .withoutRawCredentials()
+                .toString(),
+            serverRevision = serverStreams.revision
+        )
+    )
+
+    private suspend fun captureSourceConfiguration(): StreamSourceConfigurationSnapshot {
+        while (true) {
+            val profileId = profileManager.activeProfileId.value
+            val addons = addonRepository.getInstalledAddons().first().enabledAddons()
+            val pluginsEnabled = pluginManager.pluginsEnabled.first()
+            val enabledScrapers = if (pluginsEnabled) pluginManager.enabledScrapers.first() else emptyList()
+            val groupPluginsByRepository = pluginsEnabled && pluginManager.groupStreamsByRepository.first()
+            val pluginRepositories = if (groupPluginsByRepository) pluginManager.repositories.first() else emptyList()
+            val debridSettings = debridSettingsDataStore.settings.first()
+
+            if (profileManager.activeProfileId.value != profileId) continue
+
+            return StreamSourceConfigurationSnapshot(
+                profileId = profileId,
+                addons = addons,
+                pluginsEnabled = pluginsEnabled,
+                enabledScrapers = enabledScrapers,
+                groupPluginsByRepository = groupPluginsByRepository,
+                pluginRepositories = pluginRepositories,
+                debridSettings = debridSettings
+            )
+        }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun fetchStreamsFromAllSources(
+        type: String,
+        videoId: String,
+        season: Int?,
+        episode: Int?,
+        addons: List<Addon>,
+        debridSettings: DebridSettings,
+        hasCompatiblePlugins: Boolean,
+        serverSources: List<ServerStreamSource>
+    ): Flow<NetworkResult<List<AddonStreams>>> = flow {
+        emit(NetworkResult.Loading)
         // Media servers (upstream's native feature): a server item id plays only its own versions, so
         // add-ons and plugins are skipped; any other id also asks every enabled server for a match.
         val isNativeServerRequest = serverStreams.isNativeRequest(videoId)
-        val serverSources = serverStreams.sources(type, videoId, season, episode, forceRefresh)
 
         try {
-            val addons = if (isNativeServerRequest) emptyList() else addonRepository.getInstalledAddons().first().enabledAddons()
             
             // Filter addons that support streams for this type and id
             val streamAddons = addons.filter { addon ->
@@ -254,7 +365,7 @@ class StreamRepositoryImpl @Inject constructor(
             // Convert IMDB ID to TMDB ID if needed for plugins
             val tmdbId = tmdbService.ensureTmdbId(videoId, type)
             Log.d(TAG, LogRedaction.text("Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)"))
-            val pluginRequest = if (isNativeServerRequest) null else buildPluginRequest(tmdbId, type, videoId)
+            val pluginRequest = if (!hasCompatiblePlugins) null else buildPluginRequest(tmdbId, type, videoId)
             val attemptedAddonNames = streamAddons.map { it.displayName } + serverSources.map { it.name }
             val attemptedFailures = java.util.Collections.synchronizedList(
                 mutableListOf<StreamAttemptFailure>()
@@ -490,7 +601,7 @@ class StreamRepositoryImpl @Inject constructor(
                 for (result in resultChannel) {
                     val checkingResult = localDebridAvailabilityService.markChecking(listOf(result)).firstOrNull() ?: result
                     val checkedResult = localDebridAvailabilityService.annotateCachedAvailability(listOf(checkingResult)).firstOrNull() ?: checkingResult
-                    mergePresentedResult(accumulatedResults, checkedResult)
+                    mergePresentedResult(accumulatedResults, checkedResult, debridSettings)
                     emit(NetworkResult.Success(accumulatedResults.toList()))
                     Log.d(TAG, "Emitted ${accumulatedResults.size} addon(s), latest: ${checkedResult.addonName} with ${checkedResult.streams.size} streams")
                 }
@@ -516,6 +627,44 @@ class StreamRepositoryImpl @Inject constructor(
             emit(NetworkResult.Error(e.message ?: context.getString(com.nuvio.tv.R.string.stream_error_fetch_failed)))
         }
     }
+
+    private fun buildSourceConfigurationKey(
+        addons: List<Addon>,
+        pluginsEnabled: Boolean,
+        enabledScrapers: List<ScraperInfo>,
+        groupPluginsByRepository: Boolean,
+        pluginRepositories: List<PluginRepository>,
+        debridPresentationConfiguration: String,
+        serverRevision: Int
+    ): String = buildString {
+        append("addons:")
+        addons.forEach { addon ->
+            append("|addon:").append(addon)
+        }
+        append("plugins:").append(pluginsEnabled)
+        append("|grouped:").append(groupPluginsByRepository)
+        enabledScrapers.forEach { scraper ->
+            append("|scraper:").append(scraper)
+        }
+        if (groupPluginsByRepository) {
+            pluginRepositories.forEach { repository ->
+                append("|repo:").append(repository)
+            }
+        }
+        append("|debrid:").append(debridPresentationConfiguration)
+        append("|servers:").append(serverRevision)
+    }.sha256()
+
+    private fun DebridSettings.withoutRawCredentials(): DebridSettings = copy(
+        torboxApiKey = torboxApiKey.sha256(),
+        premiumizeApiKey = premiumizeApiKey.sha256(),
+        realDebridApiKey = realDebridApiKey.sha256()
+    )
+
+    private fun String.sha256(): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(toByteArray(Charsets.UTF_8))
+            .joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
     private data class PluginRequest(
         val id: String,
@@ -563,7 +712,8 @@ class StreamRepositoryImpl @Inject constructor(
 
     private suspend fun mergePresentedResult(
         accumulatedResults: MutableList<AddonStreams>,
-        result: AddonStreams
+        result: AddonStreams,
+        debridSettings: DebridSettings
     ) {
         val existingIndex = accumulatedResults.indexOfFirst { it.addonName == result.addonName }
         if (existingIndex >= 0) {
@@ -571,15 +721,16 @@ class StreamRepositoryImpl @Inject constructor(
             val merged = existing.copy(
                 streams = mergeStreams(existing.streams, result.streams)
             )
-            accumulatedResults[existingIndex] = presentStreams(merged)
+            accumulatedResults[existingIndex] = presentStreams(merged, debridSettings)
         } else {
-            accumulatedResults.add(presentStreams(result))
+            accumulatedResults.add(presentStreams(result, debridSettings))
         }
     }
 
-    private suspend fun presentStreams(result: AddonStreams): AddonStreams {
+    private suspend fun presentStreams(result: AddonStreams, debridSettings: DebridSettings): AddonStreams {
         return debridStreamPresentation.apply(
             groups = listOf(result),
+            settings = debridSettings,
             includeBadgeMatches = false
         ).firstOrNull() ?: result
     }

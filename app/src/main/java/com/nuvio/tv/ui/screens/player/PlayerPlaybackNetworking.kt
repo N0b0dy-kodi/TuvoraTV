@@ -5,6 +5,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import com.nuvio.tv.core.network.IPv4FirstDns
+import com.nuvio.tv.core.network.PlaybackSocketFactory
 import okhttp3.Dns
 import okhttp3.OkHttpClient
 import java.net.HttpURLConnection
@@ -57,6 +58,8 @@ internal object PlayerPlaybackNetworking {
         OkHttpClient.Builder()
             .dispatcher(dispatcher)
             .dns(IPv4FirstDns())
+            .socketFactory(PlaybackSocketFactory)
+            .eventListenerFactory(PlaybackConnectionEvents)
             .sslSocketFactory(sslContext.socketFactory, trustAllManager)
             .hostnameVerifier(playbackHostnameVerifier)
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -102,6 +105,8 @@ internal object PlayerPlaybackNetworking {
         OkHttpClient.Builder()
             .dispatcher(dispatcher)
             .dns(IPv4FirstDns())
+            .socketFactory(PlaybackSocketFactory)
+            .eventListenerFactory(PlaybackConnectionEvents)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
@@ -117,12 +122,12 @@ internal object PlayerPlaybackNetworking {
             ?: playbackHttpClient
 
     @OptIn(UnstableApi::class)
-    fun createHttpDataSourceFactory(
+    fun createHttpClient(
         defaultHeaders: Map<String, String> = emptyMap(),
         dns: Dns? = null,
         useLongReadTimeout: Boolean = false,
         url: String? = null
-    ): DataSource.Factory {
+    ): OkHttpClient {
         val builder = clientFor(url).newBuilder()
         if (useLongReadTimeout) {
             builder.readTimeout(LOOPBACK_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -152,9 +157,19 @@ internal object PlayerPlaybackNetworking {
                 }
             }
         }
-        val client = builder
+        return builder
             .let { NuvioExoPlayerPerformanceHelper.applyNetworkOptimizations(it) }
             .build()
+    }
+
+    @OptIn(UnstableApi::class)
+    fun createHttpDataSourceFactory(
+        defaultHeaders: Map<String, String> = emptyMap(),
+        dns: Dns? = null,
+        useLongReadTimeout: Boolean = false,
+        url: String? = null
+    ): DataSource.Factory {
+        val client = createHttpClient(defaultHeaders, dns, useLongReadTimeout, url)
         return OkHttpDataSource.Factory(client).apply {
             setDefaultRequestProperties(defaultHeaders)
             if (defaultHeaders.none { it.key.equals("User-Agent", ignoreCase = true) }) {

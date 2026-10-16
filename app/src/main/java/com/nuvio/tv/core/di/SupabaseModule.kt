@@ -12,7 +12,10 @@ import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.storage
+import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.realtime.realtime
 import javax.inject.Singleton
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Fork: delegates to the switchable [SyncBackendSupabaseProvider] instead of building a second
@@ -44,6 +47,10 @@ object SupabaseModule {
     @Provides
     @Singleton
     fun provideSupabaseStorage(provider: SyncBackendSupabaseProvider): Storage = provider.client.storage
+
+    @Provides
+    @Singleton
+    fun provideSupabaseRealtime(provider: SyncBackendSupabaseProvider): Realtime = provider.client.realtime
 
     // Backs upstream's (gated-off) custom-server ServerConnectionViewModel; the fork reads the
     // active server from its own store so the Hilt graph validates even though the UI is inert.

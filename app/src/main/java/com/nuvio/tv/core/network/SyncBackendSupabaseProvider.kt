@@ -9,6 +9,11 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.realtime.websocket.KtorRealtimeWebsocketFactory
+import io.github.jan.supabase.supabaseJson
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
+import kotlin.time.Duration.Companion.seconds
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.storage.Storage
 import io.ktor.client.plugins.HttpRequestRetry
@@ -54,11 +59,15 @@ class SyncBackendSupabaseProvider @Inject constructor(
             ?.let { return it.client }
 
         val userAgent = "NuvioTV/${BuildConfig.VERSION_NAME.ifBlank { "dev" }}"
-        val client = createSupabaseClient(
+        val rateLimitCoordinator = BackendRateLimitCoordinator()
+        lateinit var client: SupabaseClient
+        client = createSupabaseClient(
             supabaseUrl = backend.normalizedSupabaseUrl,
             supabaseKey = backend.anonKey,
         ) {
             httpConfig {
+                install(WebSockets) { contentConverter = KotlinxWebsocketSerializationConverter(supabaseJson) }
+                install(BackendRateLimitPlugin) { coordinator = rateLimitCoordinator }
                 // supabase-kt retries a failed refresh only for its NETWORK_ERROR_CODES (5xx) and
                 // for failures that never reached the server. Every other failing status falls
                 // through to clearSession(), which deletes the persisted session — the box then
@@ -99,6 +108,11 @@ class SyncBackendSupabaseProvider @Inject constructor(
                 // see AuthManager single-refresher discipline). Return the current token only;
                 // alwaysAutoRefresh keeps it fresh and propagates via setAuth.
                 accessToken = { auth.currentAccessTokenOrNull() }
+                customUrl = realtimeUrl(backend.normalizedSupabaseUrl)
+                reconnectDelay = 3.seconds
+                websocketFactory = RealtimeSocketFactory { url ->
+                    KtorRealtimeWebsocketFactory(client.httpClient.httpClient).create(url)
+                }
             }
             // Backs upstream's cosmetic ProfileBackgroundRepository (kept inert without a member backend).
             install(Storage)

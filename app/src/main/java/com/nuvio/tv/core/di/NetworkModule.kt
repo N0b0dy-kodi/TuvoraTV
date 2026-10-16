@@ -13,6 +13,7 @@ import com.nuvio.tv.core.iptv.FailoverFailure
 import com.nuvio.tv.core.iptv.FailoverFailureClassifier
 import com.nuvio.tv.core.iptv.STALE_FALLBACK_HEADER
 import com.nuvio.tv.core.iptv.classifyFailoverThrowable
+import com.nuvio.tv.core.network.NoDelaySocketFactory
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.data.remote.api.AniSkipApi
 import com.nuvio.tv.data.remote.api.AnimeSkipApi
@@ -120,6 +121,7 @@ object NetworkModule {
         return OkHttpClient.Builder()
             .dns(IPv4FirstDns())
             .addInterceptor(com.nuvio.tv.core.diagnostics.HttpTraceInterceptor("API"))
+            .socketFactory(NoDelaySocketFactory)
             // Keep separate from the old trust-all cache. Cached responses bypass a new TLS handshake.
             .cache(Cache(File(context.cacheDir, "http_cache_v2"), 50L * 1024 * 1024)) // 50 MB disk cache
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -208,6 +210,7 @@ object NetworkModule {
     @Named("customServerAuth")
     fun provideCustomServerAuthHttpClient(): OkHttpClient = OkHttpClient.Builder()
         .dns(IPv4FirstDns())
+        .socketFactory(NoDelaySocketFactory)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .addInterceptor { chain ->
@@ -230,6 +233,7 @@ object NetworkModule {
     fun provideDirectDebridOkHttpClient(): OkHttpClient =
         OkHttpClient.Builder()
             .dns(IPv4FirstDns())
+            .socketFactory(NoDelaySocketFactory)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .addInterceptor { chain ->
@@ -306,6 +310,7 @@ object NetworkModule {
     @Named("simkl")
     fun provideSimklOkHttpClient(): OkHttpClient = OkHttpClient.Builder()
         .dns(IPv4FirstDns())
+        .socketFactory(NoDelaySocketFactory)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()

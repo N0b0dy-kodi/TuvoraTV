@@ -2075,6 +2075,7 @@
     <!-- AccountSettingsContent -->
     <string name="account_loading">載入中…</string>
     <string name="account_sync_description">在裝置間同步您的媒體庫、觀看進度、擴充套件和外掛。</string>
+    <string name="account_sync_restart_note">同步並非跨作用中裝置即時進行。登入後或要套用在其他位置進行的變更時，請重新啟動此裝置。</string>
     <string name="account_signin_qr_title">使用 QR 碼登入</string>
     <string name="account_signin_qr_subtitle">掃描 QR 碼並在手機上完成電子郵件登入</string>
     <string name="account_signin_email_title">登入</string>
@@ -3144,8 +3145,6 @@
     <string name="playback_reset_to_default">重設為預設</string>
     <string name="playback_net_custom">自訂網路</string>
     <string name="playback_net_custom_sub">使用多個並行連線來獲取漸進式串流。關閉時使用單一連線。</string>
-    <string name="playback_net_http2">啟用 HTTP/2</string>
-    <string name="playback_net_http2_sub">為網路連線啟用 HTTP/2 協定，支援請求多工和更快的握手時間。</string>
     <string name="playback_net_parallel">並行連線</string>
     <string name="playback_net_parallel_sub">使用多個並行連線來獲取串流。當您遇到緩衝但下載速度明顯足夠時啟用。</string>
     <string name="playback_net_connection_count">連線數量</string>

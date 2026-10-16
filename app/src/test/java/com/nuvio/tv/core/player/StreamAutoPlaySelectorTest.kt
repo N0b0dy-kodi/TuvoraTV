@@ -114,9 +114,7 @@ class StreamAutoPlaySelectorTest {
             preferBingeGroupInSelection = true
         )
 
-        // d293973bd: binge-group reuse searches ALL streams, so the autoplay source filter does not exclude the
-        // first same-group stream (upstream changed the behaviour without updating this test; proven on origin/dev).
-        assertEquals("first same-group stream wins regardless of source filters", filteredOutAddonMatch, selected)
+        assertEquals(filteredOutAddonMatch, selected)
     }
 
     @Test
