@@ -173,6 +173,8 @@ internal fun partyErrorOf(code: String?): PartyError? = when (code) {
     "party_full" -> PartyError.Full
     "removed", "not_member" -> PartyError.Removed
     "party_ended" -> PartyError.Ended
+    // Our backend answers an anonymous / signed-out session in-band instead of raising.
+    "sign_in_required" -> PartyError.SignInRequired
     "rate_limited" -> PartyError.RateLimited
     "unavailable" -> PartyError.Unavailable
     else -> PartyError.Network

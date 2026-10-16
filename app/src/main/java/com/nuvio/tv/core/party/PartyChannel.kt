@@ -49,6 +49,11 @@ internal class PartyChannel(
         } + scope.launch(start = CoroutineStart.UNDISPATCHED) {
             created.status.collect { status -> onConnected(status == RealtimeChannel.Status.SUBSCRIBED) }
         }
+        // Presence must be requested in the join config, or the server never tracks us. supabase-kt
+        // 3.6 sets presence.enabled at subscribe() only when a presence callback is registered
+        // (RealtimeChannelImpl.shouldEnablePresence). presenceChangeFlow's callbackFlow registers it
+        // in a producer dispatched onto the session's single-thread dispatcher, so this yield lets it
+        // run before subscribe(). Keep the session dispatcher serial and keep this order.
         yield()
         created.subscribe(blockUntilSubscribed = false)
     }
