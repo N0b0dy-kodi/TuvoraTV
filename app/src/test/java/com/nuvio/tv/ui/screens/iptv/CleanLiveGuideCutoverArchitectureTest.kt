@@ -8,6 +8,9 @@ import org.junit.Test
 class CleanLiveGuideCutoverArchitectureTest {
     private val screen = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/XtreamLiveGuideScreen.kt")
     private val catalog = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/XtreamLiveGuideViewModel.kt")
+    // Ordering checks read the catalog with whitespace removed, so a reformat (a one-line
+    // `_uiState.update { it.copy(...) }` split across lines by #36) cannot hide a real reorder.
+    private val catalogFlat = squash(catalog)
     private val owner = source("app/src/main/java/com/nuvio/tv/ui/screens/iptv/CleanLiveGuidePlaybackViewModel.kt")
 
     @Test
@@ -56,9 +59,8 @@ class CleanLiveGuideCutoverArchitectureTest {
 
     @Test
     fun `catalog publishes the profile-bound URL-free lineup before exposing channels`() {
-        val networkCommit = catalog.indexOf("publishPlaybackLineup(acc.id, token, channels)")
-        val stateCommit = catalog.indexOf(
-            "_uiState.update { it.copy(channels = channels, channelsLoad =",
+        val networkCommit = catalogFlat.indexOf(squash("publishPlaybackLineup(acc.id, token, channels)"))
+        val stateCommit = catalogFlat.indexOf(squash("_uiState.update { it.copy(channels = channels, channelsLoad ="),
             startIndex = networkCommit,
         )
         assertTrue(networkCommit >= 0)
@@ -72,26 +74,22 @@ class CleanLiveGuideCutoverArchitectureTest {
 
     @Test
     fun `provider switch cancels account work and fences every asynchronous catalog commit`() {
-        val switch = catalog.indexOf("fun setAccount(acc: XtreamAccount)")
-        val cancelCategories = catalog.indexOf("categoriesJob?.cancel()", startIndex = switch)
-        val cancelChannels = catalog.indexOf("channelsJob?.cancel()", startIndex = switch)
-        val categoryFence = catalog.indexOf(
-            "if (!isCurrentAccount(accountToken)) return@launch",
+        val switch = catalogFlat.indexOf(squash("fun setAccount(acc: XtreamAccount)"))
+        val cancelCategories = catalogFlat.indexOf(squash("categoriesJob?.cancel()"), startIndex = switch)
+        val cancelChannels = catalogFlat.indexOf(squash("channelsJob?.cancel()"), startIndex = switch)
+        val categoryFence = catalogFlat.indexOf(squash("if (!isCurrentAccount(accountToken)) return@launch"),
             startIndex = cancelChannels,
         )
-        val channelFence = catalog.indexOf(
-            "if (!isCurrentAccount(token)) return@launch",
+        val channelFence = catalogFlat.indexOf(squash("if (!isCurrentAccount(token)) return@launch"),
             startIndex = categoryFence,
         )
-        val publish = catalog.indexOf(
-            "if (!publishPlaybackLineup(acc.id, token, channels))",
+        val publish = catalogFlat.indexOf(squash("if (!publishPlaybackLineup(acc.id, token, channels))"),
             startIndex = channelFence,
         )
-        val expose = catalog.indexOf(
-            "_uiState.update { it.copy(channels = channels, channelsLoad =",
+        val expose = catalogFlat.indexOf(squash("_uiState.update { it.copy(channels = channels, channelsLoad ="),
             startIndex = publish,
         )
-        val epg = catalog.indexOf("primeEpgFor(channels)", startIndex = expose)
+        val epg = catalogFlat.indexOf(squash("primeEpgFor(channels)"), startIndex = expose)
 
         assertTrue(cancelCategories > switch)
         assertTrue(cancelChannels > cancelCategories)
@@ -121,4 +119,6 @@ class CleanLiveGuideCutoverArchitectureTest {
             ?: error("Cannot locate NuvioTV project root")
         return File(projectRoot, relativePath).readText()
     }
+
+    private fun squash(text: String): String = text.filterNot(Char::isWhitespace)
 }
