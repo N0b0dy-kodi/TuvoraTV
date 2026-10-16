@@ -107,7 +107,7 @@ class SyncBackendSupabaseProvider @Inject constructor(
                 // that trips GoTrue refresh-token reuse rotation -> spurious sign-out (auth-js#213,
                 // see AuthManager single-refresher discipline). Return the current token only;
                 // alwaysAutoRefresh keeps it fresh and propagates via setAuth.
-                accessToken = { auth.currentAccessTokenOrNull() }
+                accessToken = realtimeAccessToken
                 customUrl = realtimeUrl(backend.normalizedSupabaseUrl)
                 reconnectDelay = 3.seconds
                 websocketFactory = RealtimeSocketFactory { url ->
@@ -121,3 +121,12 @@ class SyncBackendSupabaseProvider @Inject constructor(
         return client
     }
 }
+
+/**
+ * The token every Realtime channel join carries (`access_token`): the signed-in user's session JWT, read,
+ * never refreshed here (Auth's alwaysAutoRefresh is the one refresher; supabase-kt's Realtime collects
+ * Auth.sessionStatus and setAuth()s each refreshed token through this same provider). Null when signed
+ * out: supabase-kt then sends the client's API key, which Realtime treats as anon. Private channels
+ * (watch-party:<id>) authorise on this JWT. Pinned by RealtimeAccessTokenTest.
+ */
+internal val realtimeAccessToken: suspend SupabaseClient.() -> String? = { auth.currentAccessTokenOrNull() }
