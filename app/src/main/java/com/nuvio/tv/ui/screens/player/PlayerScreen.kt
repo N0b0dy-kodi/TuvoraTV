@@ -185,7 +185,12 @@ fun PlayerScreen(
             partyNotice = null
         }
     }
+    // The panel owns the D-pad only while it is on screen. A playback error hides it, so close it
+    // for real: a hidden panel must never keep swallowing keys over the video.
     val isPartyPanelOpen = uiState.showPartyPanel && uiState.error == null
+    LaunchedEffect(uiState.showPartyPanel, uiState.error) {
+        if (uiState.showPartyPanel && uiState.error != null) viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val activity = context as? android.app.Activity

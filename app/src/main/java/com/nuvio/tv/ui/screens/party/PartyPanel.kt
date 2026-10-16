@@ -77,6 +77,10 @@ fun PartyPanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Close is the panel's fallback focus: when the start button cannot be pressed (signed out,
+    // feature off) or the party content just went away, focus lands here instead of staying on the
+    // control behind the scrim, where D-pad presses would act on a player the user cannot see.
+    val closeFocusRequester = remember { FocusRequester() }
     Box(
         modifier = modifier
             .fillMaxHeight()
@@ -99,6 +103,7 @@ fun PartyPanel(
                     text = stringResource(R.string.action_close),
                     onClick = onClose,
                     isPrimary = false,
+                    modifier = Modifier.focusRequester(closeFocusRequester),
                 )
             }
             Spacer(modifier = Modifier.height(NuvioTheme.spacing.lg))
@@ -116,6 +121,7 @@ fun PartyPanel(
                         isSupported = isSupported,
                         canStart = canStart,
                         onStart = onStart,
+                        fallbackFocusRequester = closeFocusRequester,
                     )
                 } else {
                     PartyContent(
@@ -145,11 +151,12 @@ private fun StartContent(
     isSupported: Boolean,
     canStart: Boolean,
     onStart: () -> Unit,
+    fallbackFocusRequester: FocusRequester,
 ) {
     val startFocusRequester = remember { FocusRequester() }
     val canPress = isSupported && canStart
     LaunchedEffect(canPress) {
-        if (canPress) startFocusRequester.requestFocusAfterFrames()
+        if (canPress) startFocusRequester.requestFocusAfterFrames() else fallbackFocusRequester.requestFocusAfterFrames()
     }
     Column(
         modifier = Modifier
