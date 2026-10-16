@@ -20,7 +20,8 @@ object DeepLinkParser {
             }
         }
         if (scheme == "https" || scheme == "http") return parseWebPartyLink(parsedUrl)
-        if (scheme != "nuvio") return null
+        // tuvora:// is the Tuvora app scheme; nuvio:// stays accepted. Both route identically.
+        if (scheme != "nuvio" && scheme != "tuvora") return null
 
         val host = parsedUrl.host?.lowercase().orEmpty()
         val pathSegments = parsedUrl.rawPath

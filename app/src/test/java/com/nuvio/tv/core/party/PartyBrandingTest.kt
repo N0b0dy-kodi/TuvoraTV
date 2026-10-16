@@ -12,7 +12,7 @@ class PartyBrandingTest {
     @Test
     fun officialInvitesAreTuvoraLinks() {
         assertEquals("official backend", "https://tuvora.co/party/ABC234", partyInviteLink("abc234", isCustomServer = false))
-        assertEquals("custom server keeps the app scheme", "nuvio://party/ABC234", partyInviteLink("ABC234", isCustomServer = true))
+        assertEquals("custom server uses the app scheme", "tuvora://party/ABC234", partyInviteLink("ABC234", isCustomServer = true))
     }
 
     @Test

@@ -192,7 +192,7 @@ data class ActiveParty(
     val connected: Boolean,
     val hostOnly: Boolean = false,
     val sharing: Boolean = false,
-    val inviteLink: String = "nuvio://party/$code",
+    val inviteLink: String = "tuvora://party/$code",
 ) {
     val isHost: Boolean
         get() = memberId == hostMemberId

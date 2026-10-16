@@ -733,7 +733,7 @@ class PartyRepository @Inject constructor(
 /** The link encoded in the invite QR and shared with friends. */
 fun partyInviteLink(code: String, isCustomServer: Boolean): String {
     val normalized = normalizePartyCode(code)
-    return if (isCustomServer) "nuvio://party/$normalized" else "https://$PARTY_INVITE_HOST/party/$normalized"
+    return if (isCustomServer) "tuvora://party/$normalized" else "https://$PARTY_INVITE_HOST/party/$normalized"
 }
 
 /** The name other members see: the active profile's, else the app's. */
