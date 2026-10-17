@@ -3,10 +3,17 @@ package com.nuvio.tv.core.radar
 import com.nuvio.tv.core.iptv.IptvClient
 import com.nuvio.tv.core.iptv.IptvClientFactory
 import com.nuvio.tv.core.iptv.XtreamAccount
+import com.nuvio.tv.core.iptv.XtreamCategory
+import com.nuvio.tv.core.iptv.CategorySelections
 import com.nuvio.tv.core.iptv.XtreamChannel
 import com.nuvio.tv.core.iptv.XtreamItemRegistry
 import com.nuvio.tv.core.iptv.content.EpgProgramme
 import com.nuvio.tv.core.iptv.content.IptvContentDb
+import com.nuvio.tv.core.iptv.identity.IptvIdentity
+import com.nuvio.tv.core.iptv.overlay.ChannelOverlay
+import com.nuvio.tv.core.iptv.overlay.CategoryOverlay
+import com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository
+import com.nuvio.tv.core.iptv.overlay.OverlaySnapshot
 import com.nuvio.tv.data.local.XtreamAccountStore
 import io.mockk.coVerify
 import io.mockk.coEvery
@@ -31,6 +38,62 @@ import java.util.concurrent.Executors
  * channels with a BLANK url because the portal mints a single-use link only inside playback.
  */
 class RadarChannelMatcherSourcesTest {
+
+    @Test
+    fun `hidden channels never reach partial matches or provider probes for any source`() = runTest {
+        for (account in listOf(xtreamAccount(), m3uAccount(), stalkerAccount())) {
+            val hidden = channel(1, "Spain vs Austria", "")
+            val client = clientWith(hidden)
+            val overlay = OverlaySnapshot(channels = mapOf(
+                IptvIdentity.entityId(account.id, hidden.name, hidden.epgChannelId) to ChannelOverlay(hidden = true),
+            ))
+            val matcher = matcher(account to client, overlay = { overlay })
+            val partials = mutableListOf<RadarChannelMatcher.ChannelMatch>()
+            assertTrue(matcher.match(FIXTURE, null) { partials += it }.isEmpty())
+            assertTrue(partials.isEmpty())
+            coVerify(exactly = 0) { client.shortEpg(any(), any(), any()) }
+        }
+    }
+
+    @Test
+    fun `hide and unhide reread the profile overlay without refetching the cached lineup`() = runTest {
+        val account = xtreamAccount()
+        val row = channel(1, "Spain vs Austria", XTREAM_URL)
+        val client = clientWith(row)
+        var overlay = OverlaySnapshot.EMPTY
+        val matcher = matcher(account to client, overlay = { overlay })
+        assertEquals(1, matcher.match(FIXTURE, null).size)
+        overlay = OverlaySnapshot(channels = mapOf(IptvIdentity.entityId(account.id, row.name, row.epgChannelId) to ChannelOverlay(hidden = true)))
+        assertTrue(matcher.match(FIXTURE, null).isEmpty())
+        overlay = OverlaySnapshot.EMPTY
+        assertEquals(1, matcher.match(FIXTURE, null).size)
+        coVerify(exactly = 1) { client.liveChannels(any(), any()) }
+        coVerify(exactly = 0) { client.liveCategories(any()) }
+    }
+
+    @Test
+    fun `hidden group applies before broadcaster results and category names are cached`() = runTest {
+        val account = xtreamAccount()
+        val client = clientWith(channel(1, "Sky Sports", XTREAM_URL).copy(categoryId = "sports"))
+        coEvery { client.liveCategories(any()) } returns Result.success(listOf(XtreamCategory("sports", "Sports")))
+        val overlay = OverlaySnapshot(categories = mapOf(IptvIdentity.categoryKey(account.id, "live", "Sports") to CategoryOverlay(hidden = true)))
+        val matcher = matcher(account to client, overlay = { overlay })
+        repeat(2) {
+            val partials = mutableListOf<RadarChannelMatcher.ChannelMatch>()
+            assertTrue(matcher.match(FIXTURE, null, stations = listOf(RadarTvStation(channel = "Sky Sports", country = "United Kingdom"))) { partials += it }.isEmpty())
+            assertTrue(partials.isEmpty())
+        }
+        coVerify(exactly = 1) { client.liveCategories(any()) }
+        coVerify(exactly = 0) { client.shortEpg(any(), any(), any()) }
+    }
+
+    @Test
+    fun `explicitly deselected live categories do not fetch the provider lineup`() = runTest {
+        val client = clientWith(channel(1, "Spain vs Austria", XTREAM_URL))
+        val matcher = matcher(xtreamAccount().copy(categorySelections = CategorySelections(live = emptyList())) to client)
+        assertTrue(matcher.match(FIXTURE, null).isEmpty())
+        coVerify(exactly = 0) { client.liveChannels(any(), any()) }
+    }
 
     @Test
     fun `catalog loading and scored partials do not run on the caller thread`() = runTest {
@@ -189,7 +252,10 @@ class RadarChannelMatcherSourcesTest {
         vararg playlists: Pair<XtreamAccount, IptvClient>,
         contentDb: IptvContentDb = mockk(relaxed = true),
         catalogRevision: () -> Long? = { null },
+        overlay: () -> OverlaySnapshot = { OverlaySnapshot.EMPTY },
     ): RadarChannelMatcher {
+        val overlayRepository = mockk<IptvOverlayRepository>()
+        coEvery { overlayRepository.freshSnapshot() } coAnswers { overlay() }
         coEvery { contentDb.builtAt(any()) } coAnswers { catalogRevision() }
         val store = mockk<XtreamAccountStore>()
         every { store.accounts } returns flowOf(playlists.map { it.first })
@@ -208,6 +274,7 @@ class RadarChannelMatcherSourcesTest {
             clientFactory = factory,
             catchUp = mockk(relaxed = true),
             refreshStore = mockk(relaxed = true),
+            overlayRepository = overlayRepository,
         )
     }
 

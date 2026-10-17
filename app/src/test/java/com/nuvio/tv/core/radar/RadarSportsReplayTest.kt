@@ -140,6 +140,7 @@ class RadarSportsReplayTest {
             clientFactory = mockk(relaxed = true),
             catchUp = coordinator,
             refreshStore = mockk(relaxed = true),
+            overlayRepository = mockk(relaxed = true),
         )
     }
 

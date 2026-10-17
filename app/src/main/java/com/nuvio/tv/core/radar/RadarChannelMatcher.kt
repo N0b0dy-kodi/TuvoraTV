@@ -11,6 +11,9 @@ import com.nuvio.tv.core.iptv.XtreamKind
 import com.nuvio.tv.core.iptv.XtreamProgram
 import com.nuvio.tv.core.iptv.XtreamResolvedItem
 import com.nuvio.tv.core.iptv.isXtream
+import com.nuvio.tv.core.iptv.overlay.IptvHiddenItemsPolicy
+import com.nuvio.tv.core.iptv.overlay.IptvOverlayRepository
+import com.nuvio.tv.core.iptv.overlay.OverlaySnapshot
 import com.nuvio.tv.data.local.XtreamAccountStore
 import com.nuvio.tv.domain.model.ContentType
 import kotlinx.coroutines.CancellationException
@@ -60,6 +63,7 @@ class RadarChannelMatcher @Inject constructor(
     private val clientFactory: IptvClientFactory,
     private val catchUp: com.nuvio.tv.core.iptv.CatchUpPlaybackCoordinator,
     private val refreshStore: com.nuvio.tv.core.iptv.refresh.IptvRefreshStore,
+    private val overlayRepository: IptvOverlayRepository,
 ) {
     data class CandidateChannel(
         val playlistId: String,
@@ -102,6 +106,8 @@ class RadarChannelMatcher @Inject constructor(
     // Live lists once per account per session (26k channels on real panels).
     private val channelCache = ConcurrentHashMap<String, List<XtreamChannel>>()
     private val cacheMutex = Mutex()
+    private val categoryNameCache = ConcurrentHashMap<String, List<IptvHiddenItemsPolicy.NamedCategory>>()
+    private val categoryNameMutex = Mutex()
     private val matcherGeneration = java.util.concurrent.atomic.AtomicInteger(0)
 
     suspend fun match(
@@ -439,6 +445,7 @@ class RadarChannelMatcher @Inject constructor(
     fun resetForProfile() {
         matcherGeneration.incrementAndGet()
         channelCache.clear()
+        categoryNameCache.clear()
     }
 
     // --- source assembly ------------------------------------------------------
@@ -446,8 +453,14 @@ class RadarChannelMatcher @Inject constructor(
     private suspend fun assembleCandidates(): List<CandidateChannel> {
         // Every enabled playlist, whatever its source: the factory hands back the Xtream
         // player_api client, the M3U catalog client, or the Stalker portal session as needed.
+        val overlay = try { overlayRepository.freshSnapshot() }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { OverlaySnapshot.EMPTY }
         val accounts = withContext(Dispatchers.IO) {
-            accountStore.accounts.first().filter { it.enabled }
+            accountStore.accounts.first().filter {
+                it.enabled && it.typeEnabled(com.nuvio.tv.core.iptv.XtreamAccount.TYPE_LIVE) &&
+                    it.categorySelections.live?.isEmpty() != true
+            }
         }
         return buildList {
             for (account in accounts) {
@@ -468,7 +481,23 @@ class RadarChannelMatcher @Inject constructor(
                             }
                     }
                 }
-                for (ch in channels) {
+                val categoryNames = if (SportsChannelVisibilityPolicy.needsCategoryNames(account, overlay)) {
+                    withContext(Dispatchers.IO) {
+                        categoryNameMutex.withLock {
+                            categoryNameCache[catalogKey] ?: run {
+                                val result = clientFactory.clientFor(account).liveCategories(account)
+                                (result.exceptionOrNull() as? CancellationException)?.let { throw it }
+                                val names = result.getOrDefault(emptyList()).map { IptvHiddenItemsPolicy.NamedCategory(it.id, it.name) }
+                                if (result.isSuccess) {
+                                    categoryNameCache.keys.removeAll { it.startsWith(account.id + ":") && it != catalogKey }
+                                    categoryNameCache[catalogKey] = names
+                                }
+                                names
+                            }
+                        }
+                    }
+                } else emptyList()
+                for (ch in SportsChannelVisibilityPolicy.filter(account, channels, categoryNames, overlay)) {
                     add(
                         CandidateChannel(
                             playlistId = account.id,
