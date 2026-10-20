@@ -219,9 +219,18 @@ fun LibraryScreen(
         }
     }
 
-    LaunchedEffect(uiState.isLoading, uiState.sourceMode, uiState.listTabs.size) {
-        if (!uiState.isLoading && pendingPrimaryFocus && viewMode == LibraryViewMode.Servers && serverFocusTarget != null) {
+    LaunchedEffect(uiState.isLoading, uiState.sourceMode, uiState.listTabs.size, viewMode, serverShelves) {
+        if (viewMode == LibraryViewMode.Servers) {
+            if (!pendingPrimaryFocus) return@LaunchedEffect
+            val shelves = serverShelves ?: return@LaunchedEffect
+            val firstShelf = shelves.firstOrNull { !it.row?.items.isNullOrEmpty() }
+            if (firstShelf != null) {
+                serverFocusTarget = serverFocusTarget ?: (firstShelf.key to 0)
+            } else {
+                primaryFocusRequester.requestFocus(androidx.compose.ui.focus.FocusDirection.Enter)
+            }
             pendingPrimaryFocus = false
+            return@LaunchedEffect
         }
         if (!uiState.isLoading && pendingPrimaryFocus) {
             val restoreKey = lastFocusedPosterKey
@@ -233,15 +242,15 @@ fun LibraryScreen(
                 if (gridState.firstVisibleItemIndex == 0 && gridState.firstVisibleItemScrollOffset == 0) {
                     runCatching { gridState.scrollToItem(restoreIndex) }
                 }
-                focused = runCatching { restoreRequester.requestFocus() }.isSuccess
+                focused = runCatching { restoreRequester.requestFocus(androidx.compose.ui.focus.FocusDirection.Enter) }.getOrDefault(false)
                 if (!focused) {
                     delay(16)
-                    focused = runCatching { restoreRequester.requestFocus() }.isSuccess
+                    focused = runCatching { restoreRequester.requestFocus(androidx.compose.ui.focus.FocusDirection.Enter) }.getOrDefault(false)
                 }
             }
 
             if (!focused) {
-                focused = runCatching { primaryFocusRequester.requestFocus() }.isSuccess
+                focused = runCatching { primaryFocusRequester.requestFocus(androidx.compose.ui.focus.FocusDirection.Enter) }.getOrDefault(false)
             }
             if (!focused) {
                 delay(16)
@@ -258,7 +267,7 @@ fun LibraryScreen(
         var focused = false
         repeat(6) {
             focused = posterFocusRequesters[targetKey]
-                ?.let { requester -> runCatching { requester.requestFocus() }.isSuccess }
+                ?.let { requester -> runCatching { requester.requestFocus(androidx.compose.ui.focus.FocusDirection.Enter) }.getOrDefault(false) }
                 ?: false
             if (focused) return@LaunchedEffect
             delay(24)

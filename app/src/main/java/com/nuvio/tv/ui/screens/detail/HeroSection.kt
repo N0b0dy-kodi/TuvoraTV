@@ -251,6 +251,14 @@ fun HeroContentSection(
                 exit = fadeOut(tween(NuvioMotion.tokens.durations.overlay))
             ) {
                 Column {
+                    if (!isPlayEnabled && !com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) {
+                        Text(
+                            text = stringResource(R.string.playback_build_restricted_message),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = NuvioTheme.colors.TextSecondary,
+                            modifier = Modifier.padding(bottom = NuvioTheme.spacing.sm)
+                        )
+                    }
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.md),
                         verticalAlignment = Alignment.CenterVertically

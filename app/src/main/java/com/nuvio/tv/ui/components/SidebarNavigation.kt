@@ -114,7 +114,11 @@ private fun SidebarNavItem(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val backgroundColor by animateColorAsState(
-        targetValue = if (isFocused || isSelected) NuvioTheme.colors.FocusBackground else Color.Transparent,
+        targetValue = when {
+            isFocused -> NuvioTheme.colors.FocusBackground
+            isSelected -> NuvioTheme.colors.Primary.copy(alpha = 0.12f)
+            else -> Color.Transparent
+        },
         label = "navItemBackground"
     )
     val borderColor by animateColorAsState(
@@ -170,7 +174,11 @@ private fun SidebarNavItem(
         Text(
             text = item.label,
             style = MaterialTheme.typography.titleMedium,
-            color = if (isFocused || isSelected) NuvioTheme.colors.TextPrimary else NuvioTheme.colors.TextSecondary
+            color = when {
+                isFocused -> NuvioTheme.colors.FocusContent
+                isSelected -> NuvioTheme.colors.TextPrimary
+                else -> NuvioTheme.colors.TextSecondary
+            }
         )
     }
     }

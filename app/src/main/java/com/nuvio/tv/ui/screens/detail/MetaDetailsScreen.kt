@@ -731,7 +731,7 @@ fun MetaDetailsScreen(
                 }
                 val playEpisode: (Video) -> Unit = playEpisode@{ video ->
                     if (!playbackAvailability.canStream(meta.apiType, video.id, meta.id, video)) {
-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, (if (com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) R.string.playback_unavailable_message else R.string.playback_build_restricted_message), Toast.LENGTH_SHORT).show()
                         return@playEpisode
                     }
                     onPlayClick(
@@ -753,7 +753,7 @@ fun MetaDetailsScreen(
                 }
                 val playEpisodeManually: (Video) -> Unit = playEpisodeManually@{ video ->
                     if (!playbackAvailability.canStream(meta.apiType, video.id, meta.id, video)) {
-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, (if (com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) R.string.playback_unavailable_message else R.string.playback_build_restricted_message), Toast.LENGTH_SHORT).show()
                         return@playEpisodeManually
                     }
                     onPlayManuallyClick(
@@ -775,7 +775,7 @@ fun MetaDetailsScreen(
                 }
                 val playTitle: (String) -> Unit = playTitle@{ videoId ->
                     if (!playbackAvailability.canStream(meta.apiType, videoId, meta.id)) {
-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, (if (com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) R.string.playback_unavailable_message else R.string.playback_build_restricted_message), Toast.LENGTH_SHORT).show()
                         return@playTitle
                     }
                     onPlayClick(
@@ -797,7 +797,7 @@ fun MetaDetailsScreen(
                 }
                 val playTitleManually: (String) -> Unit = playTitleManually@{ videoId ->
                     if (!playbackAvailability.canStream(meta.apiType, videoId, meta.id)) {
-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, (if (com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) R.string.playback_unavailable_message else R.string.playback_build_restricted_message), Toast.LENGTH_SHORT).show()
                         return@playTitleManually
                     }
                     onPlayManuallyClick(
@@ -848,7 +848,7 @@ fun MetaDetailsScreen(
                     }
                     if (!playbackAvailability.canStream(meta.apiType, playOnLoadVideo?.id ?: meta.id, meta.id, playOnLoadVideo)) {
                         playOnLoadReturnObserved.value = true
-                        Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, (if (com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) R.string.playback_unavailable_message else R.string.playback_build_restricted_message), Toast.LENGTH_SHORT).show()
                         return@LaunchedEffect
                     }
                     playOnLoadHandoffDispatched.value = true
@@ -940,7 +940,7 @@ fun MetaDetailsScreen(
                     onPlayManuallyClick = playTitleManually,
                     onEpisodeStartFromBeginningClick = onEpisodeStartFromBeginningClick@{ video ->
                         if (!playbackAvailability.canStream(meta.apiType, video.id, meta.id, video)) {
-                            Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, (if (com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) R.string.playback_unavailable_message else R.string.playback_build_restricted_message), Toast.LENGTH_SHORT).show()
                             return@onEpisodeStartFromBeginningClick
                         }
                         onPlayStartFromBeginningClick(
@@ -962,7 +962,7 @@ fun MetaDetailsScreen(
                     },
                     onPlayStartFromBeginningClick = onPlayStartFromBeginningClick@{ videoId ->
                         if (!playbackAvailability.canStream(meta.apiType, videoId, meta.id)) {
-                            Toast.makeText(context, R.string.playback_unavailable_message, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, (if (com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) R.string.playback_unavailable_message else R.string.playback_build_restricted_message), Toast.LENGTH_SHORT).show()
                             return@onPlayStartFromBeginningClick
                         }
                         onPlayStartFromBeginningClick(

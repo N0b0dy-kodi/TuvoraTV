@@ -35,10 +35,11 @@ fun StartupSplashScreen(
     brandWordmarkRes: Int? = null,
     modifier: Modifier = Modifier
 ) {
-    val avatarColor = remember(profileColorHex) {
+    val defaultBackground = NuvioTheme.colors.Background
+    val avatarColor = remember(profileColorHex, defaultBackground) {
         profileColorHex?.let {
             runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull()
-        } ?: Color(0xFF1E88E5)
+        } ?: defaultBackground
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
@@ -65,10 +66,10 @@ fun StartupSplashScreen(
         } else if (!skipGradient) {
             val baseBg = Color(0xFF121212)
             val baseBgElevated = Color(0xFF1E1E1E)
-            val gradientTop = lerp(baseBgElevated, avatarColor, 0.3f)
-            val gradientMid = lerp(baseBg, avatarColor, 0.14f)
-            val halfFadeStrong = avatarColor.copy(alpha = 0.26f)
-            val halfFadeSoft = avatarColor.copy(alpha = 0.08f)
+            val gradientTop = lerp(baseBgElevated, avatarColor, 0.06f)
+            val gradientMid = lerp(baseBg, avatarColor, 0.025f)
+            val halfFadeStrong = avatarColor.copy(alpha = 0.04f)
+            val halfFadeSoft = avatarColor.copy(alpha = 0.01f)
             Box(
                 modifier = Modifier
                     .fillMaxSize()

@@ -9,6 +9,7 @@ import com.nuvio.tv.core.network.NetworkResult
 import com.nuvio.tv.core.network.safeApiCall
 import com.nuvio.tv.core.build.AppFeaturePolicy
 import com.nuvio.tv.core.streams.AddonSourcePolicy
+import com.nuvio.tv.core.streams.withSourceQueryDeadline
 import com.nuvio.tv.core.streams.PlaybackAvailability
 import com.nuvio.tv.core.debrid.DebridStreamPresentation
 import com.nuvio.tv.core.debrid.LocalDebridAvailabilityService
@@ -80,7 +81,9 @@ class StreamRepositoryImpl @Inject constructor(
     // When paused, local (installed-plugin) stream search is skipped so an IPTV/direct play
     // does not also fire a redundant addon scrape. Fork-appropriate one-shot gate (checked at
     // search time) vs upstream's reactive flow — same intent, this codebase's semantics.
-    private val streamSearchSessions = StreamSearchSessionCache()
+    private val streamSearchSessions = StreamSearchSessionCache(
+        interruptedResult = { NetworkResult.Error(context.getString(R.string.stream_source_search_interrupted)) }
+    )
     private val localPluginSearchPaused = MutableStateFlow(false)
 
     override fun setLocalPluginSearchPaused(paused: Boolean) {
@@ -101,6 +104,7 @@ class StreamRepositoryImpl @Inject constructor(
     private data class StreamSourceConfigurationSnapshot(
         val profileId: Int,
         val addons: List<Addon>,
+        val pendingAddonUrls: Set<String>,
         val pluginsEnabled: Boolean,
         val enabledScrapers: List<ScraperInfo>,
         val groupPluginsByRepository: Boolean,
@@ -268,17 +272,19 @@ class StreamRepositoryImpl @Inject constructor(
             fetchStreamsFromAllSources(
                 type = type, videoId = videoId, season = season, episode = episode,
                 addons = if (isNativeServerRequest) emptyList() else sourceConfiguration.addons,
+                pendingAddonUrls = if (isNativeServerRequest || !AppFeaturePolicy.addonStreamSourcesEnabled) emptySet() else sourceConfiguration.pendingAddonUrls,
+                forceRefresh = forceRefresh,
                 debridSettings = sourceConfiguration.debridSettings,
                 hasCompatiblePlugins = !isNativeServerRequest && sourceConfiguration.pluginsEnabled &&
                     sourceConfiguration.enabledScrapers.any { it.supportsType(type) },
                 serverSources = serverStreams.sources(type, videoId, season, episode, forceRefresh)
-            )
+            ).withSourceQueryDeadline { NetworkResult.Error(context.getString(R.string.stream_source_query_timed_out)) }
         }
         // Own-source matching can mint single-use links and has its own refresh policy.
         // Keep those searches scoped to their collector; reuse upstream searches only.
         if (hasForkMatchSources(type)) emitAll(producer())
         else emitAll(streamSearchSessions.observe(requestKey, forceRefresh, producer))
-    }
+    }.withSourceQueryDeadline { NetworkResult.Error(context.getString(R.string.stream_source_query_timed_out)) }
 
     private suspend fun hasForkMatchSources(type: String): Boolean =
         xtreamAccountStore.accounts.first().any { it.enabled } || sourceStreams.matchSourceGroups(type).isNotEmpty()
@@ -311,14 +317,16 @@ class StreamRepositoryImpl @Inject constructor(
             debridPresentationConfiguration = sourceConfiguration.debridSettings
                 .withoutRawCredentials()
                 .toString(),
-            serverRevision = serverStreams.revision
+            serverRevision = serverStreams.revision,
+            pendingAddonUrls = sourceConfiguration.pendingAddonUrls,
         )
     )
 
     private suspend fun captureSourceConfiguration(): StreamSourceConfigurationSnapshot {
         while (true) {
             val profileId = profileManager.activeProfileId.value
-            val addons = addonRepository.getInstalledAddons().first().enabledAddons()
+            val discovery = addonRepository.getAddonDiscoveryState().first { it.initialized }
+            val addons = discovery.addons.enabledAddons()
             val pluginsEnabled = pluginManager.pluginsEnabled.first()
             val enabledScrapers = if (pluginsEnabled) pluginManager.enabledScrapers.first() else emptyList()
             val groupPluginsByRepository = pluginsEnabled && pluginManager.groupStreamsByRepository.first()
@@ -330,6 +338,7 @@ class StreamRepositoryImpl @Inject constructor(
             return StreamSourceConfigurationSnapshot(
                 profileId = profileId,
                 addons = addons,
+                pendingAddonUrls = discovery.pendingUrls + discovery.failedUrls,
                 pluginsEnabled = pluginsEnabled,
                 enabledScrapers = enabledScrapers,
                 groupPluginsByRepository = groupPluginsByRepository,
@@ -346,6 +355,8 @@ class StreamRepositoryImpl @Inject constructor(
         season: Int?,
         episode: Int?,
         addons: List<Addon>,
+        pendingAddonUrls: Set<String>,
+        forceRefresh: Boolean,
         debridSettings: DebridSettings,
         hasCompatiblePlugins: Boolean,
         serverSources: List<ServerStreamSource>
@@ -363,10 +374,11 @@ class StreamRepositoryImpl @Inject constructor(
             }
 
             // Convert IMDB ID to TMDB ID if needed for plugins
-            val tmdbId = tmdbService.ensureTmdbId(videoId, type)
+            val tmdbId = if (hasCompatiblePlugins) tmdbService.ensureTmdbId(videoId, type) else null
             Log.d(TAG, LogRedaction.text("Video ID: $videoId -> TMDB ID: $tmdbId (type: $type)"))
             val pluginRequest = if (!hasCompatiblePlugins) null else buildPluginRequest(tmdbId, type, videoId)
-            val attemptedAddonNames = streamAddons.map { it.displayName } + serverSources.map { it.name }
+            val attemptedAddonNames = (streamAddons.map { it.displayName } + serverSources.map { it.name } +
+                pendingAddonUrls.map { context.getString(R.string.stream_discovering_source) }).toMutableList()
             val attemptedFailures = java.util.Collections.synchronizedList(
                 mutableListOf<StreamAttemptFailure>()
             )
@@ -393,12 +405,13 @@ class StreamRepositoryImpl @Inject constructor(
             // Empty until a source offers match groups (media servers: P3); nothing about IPTV changes.
             val sourceMatchGroups = if (type == "movie" || type == "series") sourceStreams.matchSourceGroups(type) else emptyList()
 
+            attemptedAddonNames += xtreamMatchTargets.map { it.name } + sourceMatchGroups.map { it.addonName }
             coroutineScope {
                 // Channel to receive results as they complete
                 val resultChannel = Channel<AddonStreams>(Channel.UNLIMITED)
 
                 // Track number of pending jobs
-                val totalJobs = streamAddons.size +
+                val totalJobs = streamAddons.size + pendingAddonUrls.size +
                     (if (pluginRequest != null) 1 else 0) +
                     xtreamMatchTargets.size +
                     sourceMatchGroups.size +
@@ -504,6 +517,41 @@ class StreamRepositoryImpl @Inject constructor(
                     }
                 }
 
+                // Cold manifests join the existing discovery owner while known sources remain selectable.
+                pendingAddonUrls.forEach { url ->
+                    launch {
+                        val label = context.getString(R.string.stream_discovering_source)
+                        try {
+                            val ready = addonRepository.getAddonDiscoveryState().first {
+                                it.initialized && url !in it.pendingUrls
+                            }
+                            val addon = if (url in ready.failedUrls && forceRefresh) {
+                                (addonRepository.fetchAddon(url) as? NetworkResult.Success)?.data
+                            } else ready.addons.firstOrNull { it.baseUrl == url && it.enabled }
+                            if (addon == null || url in ready.failedUrls && !forceRefresh) {
+                                attemptedFailures += StreamAttemptFailure(label, StreamFailureKind.REQUEST_FAILED,
+                                    context.getString(R.string.stream_source_configuration_failed))
+                            } else if (addon.enabled && addon.supportsStreamResource(type, videoId)) {
+                                when (val result = getStreamsFromAddon(addon, type, videoId)) {
+                                    is NetworkResult.Success -> if (result.data.isNotEmpty()) {
+                                        resultChannel.send(AddonStreams(addon.displayName, addon.logo,
+                                            result.data.map { it.copy(addonName = addon.displayName, addonLogo = addon.logo) }))
+                                    }
+                                    is NetworkResult.Error -> attemptedFailures += buildAddonFailure(addon, result)
+                                    NetworkResult.Loading -> Unit
+                                }
+                            }
+                        } catch (error: Exception) {
+                            if (error is CancellationException) throw error
+                            attemptedFailures += StreamAttemptFailure(label, StreamFailureKind.REQUEST_FAILED,
+                                context.getString(R.string.stream_source_configuration_failed))
+                        } finally {
+                            markNonIptvDone()
+                            if (completedJobs.incrementAndGet() >= totalJobs) resultChannel.close()
+                        }
+                    }
+                }
+
                 // Launch TMDB->Xtream match jobs (one group per enabled IPTV account)
                 xtreamMatchTargets.forEach { acc ->
                     launch {
@@ -513,7 +561,8 @@ class StreamRepositoryImpl @Inject constructor(
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
                                 xtreamStreamSource.streamsFor(acc, type, videoId, season, episode)
                             } ?: emptyList<Stream>().also {
-                                Log.w(TAG, "Xtream match for ${acc.name} cut after ${com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.PLAYLIST_BUDGET_MS} ms (playlist not answering)")
+                                attemptedFailures += StreamAttemptFailure(acc.name, StreamFailureKind.REQUEST_FAILED,
+                                    context.getString(R.string.stream_source_query_timed_out))
                             }
                             streams.forEach { com.nuvio.tv.core.iptv.IptvPanelHosts.note(it.url) }
                             if (streams.isNotEmpty()) {
@@ -527,6 +576,8 @@ class StreamRepositoryImpl @Inject constructor(
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
+                            attemptedFailures += StreamAttemptFailure(acc.name, StreamFailureKind.REQUEST_FAILED,
+                                context.getString(R.string.stream_error_fetch_failed))
                             Log.e(TAG, "Xtream match failed for ${acc.name}: ${e.message}")
                         } finally {
                             if (completedJobs.incrementAndGet() >= totalJobs) {
@@ -542,7 +593,10 @@ class StreamRepositoryImpl @Inject constructor(
                         try {
                             val streams = com.nuvio.tv.core.iptv.match.IptvSourceWaitPolicy.await(othersSettled) {
                                 sourceStreams.resolveMatchStreams(group.sourceId, type, videoId, season, episode)
-                            } ?: emptyList()
+                            } ?: emptyList<Stream>().also {
+                                attemptedFailures += StreamAttemptFailure(group.addonName, StreamFailureKind.REQUEST_FAILED,
+                                    context.getString(R.string.stream_source_query_timed_out))
+                            }
                             if (streams.isNotEmpty()) {
                                 resultChannel.send(
                                     AddonStreams(
@@ -554,6 +608,8 @@ class StreamRepositoryImpl @Inject constructor(
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
+                            attemptedFailures += StreamAttemptFailure(group.addonName, StreamFailureKind.REQUEST_FAILED,
+                                context.getString(R.string.stream_error_fetch_failed))
                             Log.e(TAG, "Source match failed for ${group.addonName}: ${LogRedaction.text(e.message)}")
                         } finally {
                             if (completedJobs.incrementAndGet() >= totalJobs) {
@@ -610,8 +666,6 @@ class StreamRepositoryImpl @Inject constructor(
             // Emit final result (even if empty)
             if (accumulatedResults.isEmpty()) {
                 val errorMessage = buildAggregateFailureMessage(
-                    type = type,
-                    id = videoId,
                     attemptedAddonNames = attemptedAddonNames,
                     failures = attemptedFailures.toList()
                 )
@@ -635,7 +689,8 @@ class StreamRepositoryImpl @Inject constructor(
         groupPluginsByRepository: Boolean,
         pluginRepositories: List<PluginRepository>,
         debridPresentationConfiguration: String,
-        serverRevision: Int
+        serverRevision: Int,
+        pendingAddonUrls: Set<String> = emptySet()
     ): String = buildString {
         append("addons:")
         addons.forEach { addon ->
@@ -653,6 +708,7 @@ class StreamRepositoryImpl @Inject constructor(
         }
         append("|debrid:").append(debridPresentationConfiguration)
         append("|servers:").append(serverRevision)
+        pendingAddonUrls.sorted().forEach { append("|pending:").append(it) }
     }.sha256()
 
     private fun DebridSettings.withoutRawCredentials(): DebridSettings = copy(
@@ -1039,32 +1095,22 @@ class StreamRepositoryImpl @Inject constructor(
     }
 
     private fun buildAggregateFailureMessage(
-        type: String,
-        id: String,
         attemptedAddonNames: List<String>,
         failures: List<StreamAttemptFailure>
     ): String? {
         if (attemptedAddonNames.isEmpty()) {
-            return context.getString(R.string.error_stream_no_supported_addon, type)
+            return context.getString(if (AppFeaturePolicy.addonStreamSourcesEnabled) R.string.stream_no_compatible_sources
+                else R.string.playback_build_restricted_message)
         }
-
-        val triedAddons = attemptedAddonNames.joinToString(", ")
-        val missingOnly = failures.isNotEmpty() && failures.all { it.kind == StreamFailureKind.MISSING }
-        if (failures.isEmpty() || missingOnly) {
-            return context.getString(R.string.error_stream_tried_none, triedAddons, id, type)
-        }
-
+        // All sources answered empty (or do not provide this ID): a successful no-match, not a failure.
+        if (failures.isEmpty() || failures.all { it.kind == StreamFailureKind.MISSING }) return null
         val issueSummary = failures
             .filter { it.kind == StreamFailureKind.REQUEST_FAILED }
             .distinctBy { it.addonName to it.detail }
             .take(3)
-            .joinToString("; ") { "${it.addonName}: ${it.detail}" }
-
-        return if (issueSummary.isBlank()) {
-            context.getString(R.string.error_stream_tried_generic, triedAddons, id, type)
-        } else {
-            context.getString(R.string.error_stream_tried_issues, triedAddons, id, type, issueSummary)
-        }
+            .joinToString("; ") { "${it.addonName}: ${LogRedaction.text(it.detail)}" }
+        return if (issueSummary.isBlank()) context.getString(R.string.stream_source_configuration_failed)
+            else context.getString(R.string.stream_sources_failed, issueSummary)
     }
 
     private fun encodePathSegment(value: String): String {

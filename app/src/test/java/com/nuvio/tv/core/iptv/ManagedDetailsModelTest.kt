@@ -82,7 +82,7 @@ class ManagedDetailsModelTest {
         val shelves = ManagedDetailsModel.shelves(xtream(), null, needsReimport = false)
         assertEquals(listOf(ShelfGroup.LIBRARY, ShelfGroup.REMOVE), shelves.map { it.group })
         assertEquals(listOf(DetailsAction.REMOVE), shelves[1].cards)
-        assertTrue(DetailsAction.EDIT in shelves[0].cards)
+        assertEquals("Edit must be reachable without scrolling past management tools", DetailsAction.EDIT, shelves[0].cards.first())
     }
 
     @Test

@@ -118,7 +118,7 @@ class StreamScreenViewModel @Inject constructor(
     private var sourceChipErrorDismissJob: Job? = null
     private var pendingCacheSaveJob: Job? = null
     private var streamBadgePresentationJob: Job? = null
-    private var streamBadgePresentationRequestId = 0L
+    @Volatile private var sourceRequestGeneration = 0L
     private var badgedAddonNames: Set<String> = emptySet()
     private var playbackMetaVideos: List<Video>? = null
 
@@ -227,7 +227,8 @@ class StreamScreenViewModel @Inject constructor(
         }
     }
 
-    private fun scheduleStreamBadgePresentation(groups: List<AddonStreams>) {
+    private fun scheduleStreamBadgePresentation(groups: List<AddonStreams>, requestGeneration: Long) {
+        if (requestGeneration != sourceRequestGeneration) return
         // Only process addon groups that haven't been badged yet
         val newGroups = groups.filter { it.addonName !in badgedAddonNames }
         if (newGroups.isEmpty()) return
@@ -316,7 +317,15 @@ class StreamScreenViewModel @Inject constructor(
         when (event) {
             is StreamScreenEvent.OnAddonFilterSelected -> filterByAddon(event.addonName)
             is StreamScreenEvent.OnStreamSelected -> {
+                // Explicit choice wins before URL/server preparation can suspend and a late result arrives.
+                autoPlayHandledForSession = true
+                directAutoPlayFlowEnabledForSession = false
                 cancelStreamsLoad()
+                updateUiStateIfChanged {
+                    it.copy(autoPlayStream = null, autoPlayPlaybackInfo = null,
+                        isDirectAutoPlayFlow = false, showDirectAutoPlayOverlay = false,
+                        directAutoPlayMessage = null)
+                }
             }
             StreamScreenEvent.OnAutoPlayConsumed -> {
                 if (autoPlayHandledForSession &&
@@ -351,7 +360,7 @@ class StreamScreenViewModel @Inject constructor(
                 }
                 loadStreams(forceRefresh = true)
             }
-            StreamScreenEvent.OnRetry -> loadStreams()
+            StreamScreenEvent.OnRetry -> loadStreams(forceRefresh = true)
             StreamScreenEvent.OnBackPress -> { /* Handle in screen */ }
             StreamScreenEvent.OnResume -> {
                 hostInForeground.value = true
@@ -372,7 +381,7 @@ class StreamScreenViewModel @Inject constructor(
         streamLoadScope = null
         streamLoadJob = null
         streamBadgePresentationJob?.cancel()
-        streamBadgePresentationRequestId += 1
+        sourceRequestGeneration += 1
         updateUiStateIfChanged { it.copy(isLoading = false) }
     }
 
@@ -389,12 +398,20 @@ class StreamScreenViewModel @Inject constructor(
         streamLoadScope = null
         streamLoadJob = null
         streamBadgePresentationJob?.cancel()
-        streamBadgePresentationRequestId += 1
+        sourceRequestGeneration += 1
         if (forceRefresh || _uiState.value.addonStreams.isEmpty()) {
             badgedAddonNames = emptySet()
         }
         sourceChipErrorDismissJob?.cancel()
-        val newScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + kotlinx.coroutines.SupervisorJob())
+        val requestGeneration = sourceRequestGeneration
+        val requestProfile = profileManager.activeProfileId.value
+        fun publishSourceState(transform: (StreamScreenUiState) -> StreamScreenUiState) {
+            _uiState.update { state ->
+                if (requestGeneration != sourceRequestGeneration || requestProfile != profileManager.activeProfileId.value) state
+                else transform(state)
+            }
+        }
+        val newScope = kotlinx.coroutines.CoroutineScope(viewModelScope.coroutineContext + kotlinx.coroutines.SupervisorJob(viewModelScope.coroutineContext[kotlinx.coroutines.Job]))
         streamLoadScope = newScope
         streamLoadJob = newScope.launch {
             streamLoadCompleted = false
@@ -434,7 +451,7 @@ class StreamScreenViewModel @Inject constructor(
             var resolvedAutoPlayTarget = false
 
             if (directFlowActive) {
-                updateUiStateIfChanged {
+                publishSourceState {
                     it.copy(
                         isDirectAutoPlayFlow = true,
                         showDirectAutoPlayOverlay = true,
@@ -447,7 +464,7 @@ class StreamScreenViewModel @Inject constructor(
                     )
                 }
             } else {
-                updateUiStateIfChanged {
+                publishSourceState {
                     it.copy(autoPlayDecided = true)
                 }
             }
@@ -469,7 +486,7 @@ class StreamScreenViewModel @Inject constructor(
                     resolvedAutoPlayTarget = true
                     val isCachedTorrent = cached.infoHash != null && cached.url.isNullOrBlank()
                     val showOverlay = playerSettings.playerPreference == PlayerPreference.EXTERNAL
-                    updateUiStateIfChanged {
+                    publishSourceState {
                         it.copy(
                             autoPlayPlaybackInfo = StreamPlaybackInfo(
                                 url = cached.url.takeIf { u -> u.isNotBlank() },
@@ -506,7 +523,7 @@ class StreamScreenViewModel @Inject constructor(
                 }
             }
 
-            updateUiStateIfChanged {
+            publishSourceState {
                 it.copy(
                     isLoading = forceRefresh || it.allStreams.isEmpty(),
                     error = null,
@@ -520,7 +537,7 @@ class StreamScreenViewModel @Inject constructor(
             val installedAddons = if (isNativeServerRequest) {
                 emptyList()
             } else {
-                addonRepository.getInstalledAddons().first().enabledAddons()
+                addonRepository.getAddonDiscoveryState().first { it.initialized }.addons.enabledAddons()
             }
             val installedAddonOrder = installedAddons.map { it.displayName }
             val directDebridSourceNames = emptyList<String>()
@@ -654,7 +671,7 @@ class StreamScreenViewModel @Inject constructor(
                     allStreams.filter { it.addonName == currentFilter }
                 }
 
-                updateUiStateIfChanged {
+                publishSourceState {
                     it.copy(
                         isLoading = false,
                         addonStreams = mergedAddonStreams,
@@ -679,7 +696,7 @@ class StreamScreenViewModel @Inject constructor(
                         }
                     )
                 }
-                scheduleStreamBadgePresentation(mergedAddonStreams)
+                scheduleStreamBadgePresentation(mergedAddonStreams, requestGeneration)
             }
 
             if (shouldAttemptEmbeddedMetaStreamLookup()) {
@@ -692,7 +709,7 @@ class StreamScreenViewModel @Inject constructor(
                     updateSourceChipsForEmbedded(embeddedAddonStreams.addonName)
                     if (directAutoPlayFlowEnabledForSession && !resolvedAutoPlayTarget) {
                         directAutoPlayFlowEnabledForSession = false
-                        updateUiStateIfChanged {
+                        publishSourceState {
                             it.copy(
                                 isDirectAutoPlayFlow = false,
                                 showDirectAutoPlayOverlay = false,
@@ -728,7 +745,7 @@ class StreamScreenViewModel @Inject constructor(
                     return
                 }
                 debridPreparationLaunched = true
-                viewModelScope.launch {
+                newScope.launch {
                     directDebridStreamPreparer.prepare(
                         streams = _uiState.value.allStreams,
                         season = season,
@@ -736,7 +753,7 @@ class StreamScreenViewModel @Inject constructor(
                         playerSettings = playerSettings,
                         installedAddonNames = installedAddonOrder.toSet()
                     ) { original, prepared ->
-                        updateUiStateIfChanged { state ->
+                        publishSourceState { state ->
                             val updatedGroups = directDebridStreamPreparer.replacePreparedStream(
                                 groups = state.addonStreams,
                                 original = original,
@@ -801,7 +818,7 @@ class StreamScreenViewModel @Inject constructor(
                                     if (!hasCheckingTorrents) {
                                         autoPlayHandledForSession = true
                                         directAutoPlayFlowEnabledForSession = false
-                                        updateUiStateIfChanged {
+                                        publishSourceState {
                                             it.copy(
                                                 isDirectAutoPlayFlow = false,
                                                 showDirectAutoPlayOverlay = false,
@@ -834,7 +851,7 @@ class StreamScreenViewModel @Inject constructor(
                                 if (earlyMatch != null) {
                                     resolvedAutoPlayTarget = true
                                     autoSelectTriggered = true
-                                    updateUiStateIfChanged {
+                                    publishSourceState {
                                         it.copy(
                                             autoPlayStream = earlyMatch,
                                             showDirectAutoPlayOverlay = true
@@ -847,7 +864,7 @@ class StreamScreenViewModel @Inject constructor(
                             if (directAutoPlayFlowEnabledForSession) {
                                 directAutoPlayFlowEnabledForSession = false
                             }
-                            updateUiStateIfChanged {
+                            publishSourceState {
                                 it.copy(
                                     isLoading = false,
                                     error = result.message,
@@ -858,7 +875,7 @@ class StreamScreenViewModel @Inject constructor(
                             }
                         }
                         NetworkResult.Loading -> {
-                            updateUiStateIfChanged {
+                            publishSourceState {
                                 it.copy(
                                     isLoading = forceRefresh || it.allStreams.isEmpty(),
                                     showDirectAutoPlayOverlay = if (directAutoPlayFlowEnabledForSession) {
@@ -882,7 +899,7 @@ class StreamScreenViewModel @Inject constructor(
                     // All addons finished with no instant stream to auto-play: drop the loader and
                     // reveal the manual picker now instead of holding until the hard timeout. Clear
                     // isLoading too, so an empty result set doesn't leave the screen stuck loading.
-                    updateUiStateIfChanged {
+                    publishSourceState {
                         it.copy(
                             isLoading = false,
                             isDirectAutoPlayFlow = false,
@@ -932,7 +949,7 @@ class StreamScreenViewModel @Inject constructor(
                 if (!hasCheckingTorrents) {
                     autoPlayHandledForSession = true
                     directAutoPlayFlowEnabledForSession = false
-                    updateUiStateIfChanged {
+                    publishSourceState {
                         it.copy(
                             isDirectAutoPlayFlow = false,
                             showDirectAutoPlayOverlay = false,
@@ -975,7 +992,7 @@ class StreamScreenViewModel @Inject constructor(
                     }
                     if (!resolvedAutoPlayTarget || phantomStuck) {
                         directAutoPlayFlowEnabledForSession = false
-                        updateUiStateIfChanged {
+                        publishSourceState {
                             it.copy(
                                 isLoading = false,
                                 isDirectAutoPlayFlow = false,
@@ -1004,7 +1021,7 @@ class StreamScreenViewModel @Inject constructor(
             // to the player), preventing a false "completed" flag that
             // would block resumption on return.
             ensureActive()
-            streamLoadCompleted = true
+            if (requestGeneration == sourceRequestGeneration) streamLoadCompleted = true
         }
     }
 
@@ -1597,6 +1614,7 @@ class StreamScreenViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        sourceRequestGeneration++
         super.onCleared()
         if (isTorrentStreamStarted) {
             torrentService.stopStream()

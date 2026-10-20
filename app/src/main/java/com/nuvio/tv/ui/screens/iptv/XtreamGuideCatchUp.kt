@@ -23,6 +23,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import com.nuvio.tv.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,9 +89,8 @@ internal fun guideActionFor(
 /**
  * Duration-proportional programme cells for one channel across the visible window.
  *
- * On the focused row (and only there — the D-pad can only be in one place, and making every row's
- * cells focusable would put thousands of targets in the tree) the actionable cells take focus, so
- * the traversal naturally skips future programmes and anything the provider did not keep.
+ * On the focused row (and only there), all known programmes are inspectable. Playback eligibility
+ * is separate: a future programme or an expired archive can reveal details without tuning.
  */
 @Composable
 internal fun RowScope.GuideProgrammeCells(
@@ -100,6 +101,7 @@ internal fun RowScope.GuideProgrammeCells(
     catchUpSupported: Boolean,
     interactive: Boolean,
     onProgrammeClick: (XtreamProgram) -> Unit,
+    onProgrammeFocused: (XtreamProgram) -> Unit = {},
     onTravel: (Int) -> Boolean,
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
@@ -112,9 +114,9 @@ internal fun RowScope.GuideProgrammeCells(
     val visible = programmes
         .filter { it.endMs > windowStartMs && it.startMs < windowEndMs && it.endMs > it.startMs }
         .sortedBy { it.startMs }
-    val actionable = if (!interactive) emptyList() else visible.filter {
-        GuideCellIntent.isFocusable(guideActionFor(it, channel, nowMs, catchUpSupported))
-    }
+    // Inspection is useful even when a programme cannot be played (future/no archive).
+    // Playback eligibility remains in GuideCellIntent, independent of focus eligibility.
+    val actionable = if (interactive) visible else emptyList()
     val actionableStarts = actionable.map { it.startMs }
     val firstActionableStart = actionableStarts.firstOrNull()
     val lastActionableStart = actionableStarts.lastOrNull()
@@ -212,7 +214,7 @@ internal fun RowScope.GuideProgrammeCells(
                         )
                         // clickable for reliable D-pad focus (see GuideCell); OK on an empty
                         // stretch of time has nothing to do.
-                        .clickable { }
+                        .clickable { onExitTimeline?.invoke() }
                 } else Modifier
             )
     ) {
@@ -222,7 +224,7 @@ internal fun RowScope.GuideProgrammeCells(
         ) {
             if (visible.isEmpty()) {
                 GuideCell(
-                    title = null,
+                    title = stringResource(R.string.iptv_guide_empty_window),
                     weightMs = GuideTimeTravel.WINDOW_MS,
                     action = ProgrammeAction.NONE,
                     live = false,
@@ -238,7 +240,7 @@ internal fun RowScope.GuideProgrammeCells(
                         GuideCell(null, start - cursor, ProgrammeAction.NONE, false, true, {})
                     }
                     val action = guideActionFor(p, channel, nowMs, catchUpSupported)
-                    val focusable = interactive && GuideCellIntent.isFocusable(action)
+                    val focusable = interactive
                     GuideCell(
                         title = p.title,
                         weightMs = end - start,
@@ -255,7 +257,7 @@ internal fun RowScope.GuideProgrammeCells(
                             leadingEdgeFocus.takeIf { p.startMs == firstActionableStart },
                             trailingEdgeFocus.takeIf { p.startMs == lastActionableStart },
                         ),
-                        onFocused = { focusedStart = p.startMs },
+                        onFocused = { focusedStart = p.startMs; onProgrammeFocused(p) },
                     )
                     cursor = end
                 }
@@ -311,7 +313,7 @@ private fun RowScope.GuideCell(
             .clip(RoundedCornerShape(NuvioTheme.radii.xs))
             .background(
                 when {
-                    isFocused -> NuvioTheme.colors.Primary
+                    isFocused -> NuvioTheme.colors.FocusBackground
                     live -> NuvioTheme.colors.Primary.copy(alpha = 0.20f)
                     filler -> NuvioTheme.colors.BackgroundElevated.copy(alpha = 0.4f)
                     else -> NuvioTheme.colors.BackgroundElevated
@@ -336,7 +338,7 @@ private fun RowScope.GuideCell(
                 Text(
                     text = REPLAY_GLYPH,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isFocused) NuvioTheme.colors.OnPrimary else NuvioTheme.colors.Primary,
+                    color = if (isFocused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.Primary,
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.width(4.dp))
@@ -345,7 +347,7 @@ private fun RowScope.GuideCell(
                 text = title,
                 style = MaterialTheme.typography.labelMedium,
                 color = when {
-                    isFocused -> NuvioTheme.colors.OnPrimary
+                    isFocused -> NuvioTheme.colors.FocusContent
                     live -> NuvioTheme.colors.TextPrimary
                     else -> NuvioTheme.colors.TextSecondary
                 },
@@ -527,7 +529,7 @@ private fun GuideSheetButton(
             .clip(RoundedCornerShape(NuvioTheme.radii.sm))
             .background(
                 when {
-                    isFocused -> NuvioTheme.colors.Primary
+                    isFocused -> NuvioTheme.colors.FocusBackground
                     primary -> NuvioTheme.colors.Primary.copy(alpha = 0.22f)
                     else -> Color.Transparent
                 }
@@ -550,7 +552,7 @@ private fun GuideSheetButton(
         Text(
             text = label,
             style = MaterialTheme.typography.titleSmall,
-            color = if (isFocused) NuvioTheme.colors.OnPrimary else NuvioTheme.colors.TextPrimary,
+            color = if (isFocused) NuvioTheme.colors.FocusContent else NuvioTheme.colors.TextPrimary,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
         )

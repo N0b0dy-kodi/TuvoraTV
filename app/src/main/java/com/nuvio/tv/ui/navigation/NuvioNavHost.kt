@@ -1335,8 +1335,12 @@ private fun PlaybackNavHost(
             )
         }
 
-        composable(Screen.IptvSettings.route) {
+        composable(
+            Screen.IptvSettings.route + "?add={add}",
+            arguments = listOf(navArgument("add") { type = NavType.BoolType; defaultValue = false })
+        ) { entry ->
             com.nuvio.tv.ui.screens.settings.XtreamSettingsContent(
+                openAddOnEntry = entry.arguments?.getBoolean("add") == true,
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
                 onEnterSetupCode = { navController.navigate(Screen.IptvSetupCode.route) }
             )
@@ -1398,7 +1402,8 @@ private fun PlaybackNavHost(
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))
                 },
-                onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
+                onAddProvider = { navController.navigate(Screen.IptvSettings.route + "?add=true") },
+                onManagePlaylists = { navController.navigate(Screen.IptvSettings.route) },
                 onPairFromPhone = { navController.navigate(Screen.IptvPairing.route) },
                 onEnterSetupCode = { navController.navigate(Screen.IptvSetupCode.route) },
                 // Catch-up takes the same proven live route (contentType="live" keeps the live DoH
@@ -1448,7 +1453,7 @@ private fun PlaybackNavHost(
                         onNonLive = {},
                     )
                 },
-                onAddProvider = { navController.navigate(Screen.IptvSettings.route) },
+                onAddProvider = { navController.navigate(Screen.IptvSettings.route + "?add=true") },
                 // Recordings are registry-registered VOD ids — native detail pipeline.
                 onOpenDetail = { contentId, type ->
                     navController.navigate(Screen.Detail.createRoute(contentId, type))

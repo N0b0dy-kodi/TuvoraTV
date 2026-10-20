@@ -1068,8 +1068,11 @@ object PlaybackStateMachine {
 
     private fun firstAudio(state: PlaybackMachineState): PlaybackTransition {
         if (!state.snapshot.state.acceptsProgress()) return unchanged(state)
+        // A native teardown can publish an empty track-list after EOF. Absence of video is
+        // not proof of audio-only playback: reusing prior audio progress would mark an idle
+        // engine PLAYING and cancel the reconnect before it opens the replacement stream.
         val audioOnlyConfirmed = state.snapshot.progress.discoveredTracks &&
-            !state.snapshot.tracks.hasVideoTrack
+            state.snapshot.tracks.audioTrackCount > 0 && !state.snapshot.tracks.hasVideoTrack
         if (!audioOnlyConfirmed) {
             return transition(
                 state.copy(

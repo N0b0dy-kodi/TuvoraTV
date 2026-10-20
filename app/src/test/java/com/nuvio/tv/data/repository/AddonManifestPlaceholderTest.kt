@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -225,6 +226,40 @@ class AddonManifestPlaceholderTest {
         )
     }
 
+    @Test
+    fun `playback sees pending discovery rather than an initialized empty installation`() = runBlocking {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val harness = newRepository(reachable = true, manifestGate = gate, clock = { 0L })
+        try {
+            val pending = withTimeout(5_000) { harness.repository.getAddonDiscoveryState().first { it.initialized } }
+            assertEquals(setOf(addonUrl), pending.pendingUrls)
+            assertTrue(pending.addons.isEmpty())
+            gate.complete(Unit)
+            val ready = withTimeout(5_000) {
+                harness.repository.getAddonDiscoveryState().first { it.initialized && it.pendingUrls.isEmpty() && it.addons.isNotEmpty() }
+            }
+            assertEquals(REAL_NAME, ready.addons.single().name)
+            assertTrue(ready.failedUrls.isEmpty())
+        } finally { gate.complete(Unit) }
+    }
+
+    @Test
+    fun `manifest discovery and explicit consumers share one request`() = runBlocking {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val harness = newRepository(reachable = true, manifestGate = gate, clock = { 0L })
+        try {
+            withTimeout(5_000) { harness.repository.getAddonDiscoveryState().first { it.initialized } }
+            val one = kotlinx.coroutines.CoroutineScope(coroutineContext).async { harness.repository.fetchAddon(addonUrl) }
+            val two = kotlinx.coroutines.CoroutineScope(coroutineContext).async { harness.repository.fetchAddon(addonUrl) }
+            delay(50)
+            assertEquals(1, harness.manifestCalls.get())
+            one.cancel()
+            gate.complete(Unit)
+            assertTrue(withTimeout(5_000) { two.await() } is com.nuvio.tv.core.network.NetworkResult.Success)
+            assertEquals(1, harness.manifestCalls.get())
+        } finally { gate.complete(Unit) }
+    }
+
     private fun newContext(): Context = mockk(relaxed = true)
 
     private data class Harness(
@@ -238,13 +273,15 @@ class AddonManifestPlaceholderTest {
         userSetNames: kotlinx.coroutines.flow.Flow<Map<String, String>> = flowOf(emptyMap()),
         reachable: Boolean = false,
         dispatcher: CoroutineDispatcher = Dispatchers.IO,
-        clock: () -> Long = System::currentTimeMillis
+        clock: () -> Long = System::currentTimeMillis,
+        manifestGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     ): Harness {
         val manifestCalls = AtomicInteger()
         val isReachable = AtomicBoolean(reachable)
         val api = mockk<AddonApi>()
         coEvery { api.getManifest(any()) } coAnswers {
             manifestCalls.incrementAndGet()
+            manifestGate?.await()
             if (!isReachable.get()) throw IOException("offline")
             Response.success(
                 AddonManifestDto(id = "test-addon", name = REAL_NAME, version = REAL_VERSION)

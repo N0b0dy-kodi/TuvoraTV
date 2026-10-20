@@ -19,6 +19,8 @@ import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import com.nuvio.tv.domain.repository.AddonDiscoveryState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -47,6 +49,10 @@ class PlaybackAvailabilityViewModelTest {
             val pluginDataStore = mockk<PluginDataStore>()
             val metaRepository = mockk<MetaRepository>()
             every { addonRepository.getInstalledAddons() } returns addons
+            val pendingManifests = MutableStateFlow<Set<String>>(emptySet())
+            every { addonRepository.getAddonDiscoveryState() } returns combine(addons, pendingManifests) { known, pending ->
+                AddonDiscoveryState(known, pendingUrls = pending, initialized = true)
+            }
             every { pluginDataStore.scrapers } returns scrapers
             every { pluginDataStore.pluginsEnabled } returns pluginsEnabled
             every { metaRepository.getCachedMeta(any(), any()) } returns null
@@ -75,6 +81,13 @@ class PlaybackAvailabilityViewModelTest {
             runCurrent()
             assertTrue(viewModel.availability.value.isLoaded)
             assertFalse(viewModel.availability.value.canStream("movie", "tt123"))
+
+            pendingManifests.value = setOf("https://fixture.example")
+            runCurrent()
+            assertFalse(viewModel.availability.value.isLoaded)
+            assertTrue(viewModel.availability.value.canStream("movie", "tt123") == AppFeaturePolicy.addonStreamSourcesEnabled)
+            pendingManifests.value = emptySet()
+            runCurrent()
 
             val addon = Addon(
                 id = "addon", name = "Addon", version = "1", description = null, logo = null,

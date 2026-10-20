@@ -54,7 +54,9 @@ internal fun PlaybackSettingsSections(
                 val expanded = section.name in expandedSections
                 SettingsCollapsibleSection(
                     title = stringResource(section.title),
-                    description = stringResource(section.description),
+                    description = if (section == PlaybackSection.P2P) {
+                        stringResource(if (p2p.enabled) com.nuvio.tv.R.string.settings_p2p_enabled_summary else com.nuvio.tv.R.string.settings_p2p_disabled_summary)
+                    } else stringResource(section.description),
                     icon = section.icon,
                     expanded = expanded,
                     onToggle = {

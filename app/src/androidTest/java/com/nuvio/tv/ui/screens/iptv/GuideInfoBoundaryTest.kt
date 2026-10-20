@@ -54,6 +54,36 @@ class GuideInfoBoundaryTest {
         compose.onNodeWithText("Cooking Live", substring = true).assertIsDisplayed()
     }
 
+    @Test fun inspectingFutureProgrammeShowsItsDetailsWithoutLiveProgress() {
+        val current = programme("Morning News", 60, 120, true)
+        val future = programme("Evening Nature", 360, 420)
+        val epg = GuideEpg(current, future, listOf(current, future))
+        compose.setContent {
+            NuvioTheme {
+                Box(Modifier.size(600.dp, 210.dp).background(Color.Black)) {
+                    PreviewInfoPane("Fixture TV", epg, 100 * minute, null,
+                        inspectedProgramme = future, viewedTimeMs = 360 * minute)
+                }
+            }
+        }
+        compose.onNodeWithText("Evening Nature").assertIsDisplayed()
+        compose.onNodeWithText("Morning News").assertDoesNotExist()
+        compose.onNodeWithText("0 min left").assertDoesNotExist()
+        save("future-inspection")
+    }
+
+    @Test fun missingGuideExplainsTheRecoveryPath() {
+        compose.setContent {
+            NuvioTheme {
+                Box(Modifier.size(600.dp, 210.dp).background(Color.Black)) {
+                    PreviewInfoPane("Fixture TV", null, 100 * minute, null,
+                        emptyGuideMessage = "No guide data provided. Check this playlist’s EPG settings.")
+                }
+            }
+        }
+        compose.onNodeWithText("Check this playlist", substring = true).assertIsDisplayed()
+    }
+
     private fun save(stage: String) {
         val phase = InstrumentationRegistry.getArguments().getString("evidencePhase") ?: "green"
         val directory = InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null)!!

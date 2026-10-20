@@ -475,6 +475,7 @@ fun StreamScreen(
                     sharedStream = sharedStream,
                     partySource = partySource,
                     onSharedStreamSelected = { stream ->
+                        viewModel.onEvent(StreamScreenEvent.OnStreamSelected(stream))
                         scope.coroutineLaunch {
                             val playbackInfo = viewModel.resolveStreamForPlayback(stream, saveLastLink = false)
                             if (playbackInfo != null) {
@@ -485,6 +486,7 @@ fun StreamScreen(
                         }
                     },
                     onStreamSelected = { stream ->
+                        viewModel.onEvent(StreamScreenEvent.OnStreamSelected(stream))
                         val currentIndex = uiState.filteredStreams.indexOfFirst {
                             it.url == stream.url &&
                                 it.infoHash == stream.infoHash &&
@@ -757,7 +759,7 @@ private fun LeftContentSection(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun RightStreamSection(
+internal fun RightStreamSection(
     isLoading: Boolean,
     error: String?,
     streams: List<Stream>,
@@ -916,10 +918,10 @@ private fun RightStreamSection(
                 contentAlignment = Alignment.Center
             ) {
                 when {
-                    sharedStream == null && isLoading -> {
+                    sharedStream == null && streams.isEmpty() && isLoading -> {
                         LoadingState(showAddonLogo = showAddonLogo)
                     }
-                    sharedStream == null && error != null -> {
+                    sharedStream == null && streams.isEmpty() && error != null -> {
                         ErrorState(
                             message = error,
                             onRetry = onRetry

@@ -32,7 +32,13 @@ internal class FakeServerProvider(
     val failingLibraries = mutableSetOf<String>()
     val userStates = mutableMapOf<String, List<ServerUserState>>()
 
-    override suspend fun libraries(session: ServerSession): List<ServerLibrary> = listOf(MOVIE_LIBRARY, SERIES_LIBRARY)
+    var beforeLibraries: suspend () -> Unit = {}
+    var libraryLoads = 0
+    override suspend fun libraries(session: ServerSession): List<ServerLibrary> {
+        libraryLoads++
+        beforeLibraries()
+        return listOf(MOVIE_LIBRARY, SERIES_LIBRARY)
+    }
 
     override suspend fun libraryPage(
         session: ServerSession,

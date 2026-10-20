@@ -73,7 +73,7 @@ class GuideTimelineStripFocusTest {
     )
 
     @Test
-    fun `a future window holds the cursor on the strip and LEFT and RIGHT keep travelling`() {
+    fun `an empty window holds the cursor on the strip and LEFT and RIGHT keep travelling`() {
         val leading = FocusRequester()
         val trailing = FocusRequester()
         val strip = FocusRequester()
@@ -82,7 +82,7 @@ class GuideTimelineStripFocusTest {
             NuvioTheme {
                 Row(Modifier.width(900.dp).height(44.dp)) {
                     GuideProgrammeCells(
-                        programmes = listOf(laterTonight),
+                        programmes = emptyList(),
                         channel = channel,
                         windowStartMs = futureWindowStart,
                         nowMs = now,
@@ -98,7 +98,7 @@ class GuideTimelineStripFocusTest {
             }
         }
         rule.runOnIdle {
-            assertFalse("a future programme is not a cell to stop on", leading.requestFocusOrFalse())
+            assertFalse("an empty window has no programme focus target", leading.requestFocusOrFalse())
             assertTrue("the strip takes the cursor instead", strip.requestFocusOrFalse())
         }
         rule.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
@@ -109,6 +109,29 @@ class GuideTimelineStripFocusTest {
                 listOf(GuideTimeTravel.EDGE_TRAVEL_SLOTS, -GuideTimeTravel.EDGE_TRAVEL_SLOTS),
                 travels,
             )
+        }
+    }
+
+    @Test
+    fun `a future programme takes focus for inspection without becoming playable`() {
+        val leading = FocusRequester()
+        var inspected: XtreamProgram? = null
+        rule.setContent {
+            NuvioTheme {
+                Row(Modifier.width(900.dp).height(44.dp)) {
+                    GuideProgrammeCells(
+                        programmes = listOf(laterTonight), channel = channel,
+                        windowStartMs = futureWindowStart, nowMs = now,
+                        catchUpSupported = true, interactive = true,
+                        onProgrammeClick = {}, onProgrammeFocused = { inspected = it },
+                        onTravel = { false }, leadingEdgeFocus = leading,
+                    )
+                }
+            }
+        }
+        rule.runOnIdle { assertTrue(leading.requestFocusOrFalse()) }
+        rule.runOnIdle {
+            assertEquals(laterTonight, inspected)
         }
     }
 

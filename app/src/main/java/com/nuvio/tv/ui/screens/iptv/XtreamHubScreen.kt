@@ -100,6 +100,7 @@ import kotlin.math.abs
 fun XtreamHubScreen(
     onOpenDetail: (contentId: String, type: String) -> Unit,
     onAddProvider: () -> Unit,
+    onManagePlaylists: () -> Unit = {},
     onPairFromPhone: () -> Unit = {},
     onEnterSetupCode: () -> Unit = {},
     /** Opens a catch-up replay in the full player — see LiveGuide's parameter of the same name. */
@@ -221,8 +222,8 @@ fun XtreamHubScreen(
                 label = uiState.selectedAccount?.name?.let(com.nuvio.tv.core.iptv.PlaylistDisplayPolicy::displayName) ?: stringResource(R.string.iptv_hub_account_fallback),
                 selected = false,
                 focusRequester = firstFocus,
-                showDropdownIcon = uiState.accounts.size > 1,
-                onClick = { if (uiState.accounts.size > 1) showAccountPicker = true }
+                showDropdownIcon = true,
+                onClick = { showAccountPicker = true }
             )
         }
 
@@ -265,6 +266,11 @@ fun XtreamHubScreen(
             title = stringResource(R.string.iptv_hub_choose_provider),
             scrollable = true, // many providers must all be reachable — don't clip past the dialog height
         ) {
+            com.nuvio.tv.ui.screens.settings.SettingsActionRow(
+                title = stringResource(R.string.iptv_manage_playlists),
+                subtitle = null, value = null,
+                onClick = { showAccountPicker = false; onManagePlaylists() }
+            )
             uiState.accounts.forEach { acc ->
                 com.nuvio.tv.ui.screens.settings.SettingsActionRow(
                     title = com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.displayName(acc.name),
@@ -647,7 +653,7 @@ private fun HubHeaderSeeAllButton(
             containerColor = NuvioTheme.colors.BackgroundCard,
             contentColor = NuvioTheme.colors.TextSecondary,
             focusedContainerColor = NuvioTheme.colors.FocusBackground,
-            focusedContentColor = NuvioTheme.colors.Primary,
+            focusedContentColor = NuvioTheme.colors.FocusContent,
         ),
         shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.sm)),
         contentPadding = PaddingValues(
@@ -821,7 +827,7 @@ private fun HubActionButton(
             containerColor = NuvioTheme.colors.BackgroundCard,
             contentColor = NuvioTheme.colors.TextPrimary,
             focusedContainerColor = NuvioTheme.colors.FocusBackground,
-            focusedContentColor = NuvioTheme.colors.Primary
+            focusedContentColor = NuvioTheme.colors.FocusContent
         ),
         shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
     ) {

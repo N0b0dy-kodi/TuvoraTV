@@ -126,6 +126,70 @@ class ServerMatcherTest {
     }
 
     @Test
+    fun coldServerDiscoveryStaysPendingWithoutOpeningSettings() = runBlocking {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val provider = FakeServerProvider().apply {
+            beforeLibraries = { gate.await() }
+            indexedIds["42"] = TrackingExternalIds(imdb = "tt0111161")
+        }
+        val (_, saved) = fakeServerRepository(provider)
+        val persistence = MemoryServerPersistence().apply {
+            values[1] = kotlinx.serialization.json.Json.encodeToString(StoredServers.serializer(), StoredServers(
+                connections = listOf(saved.copy(libraries = emptyList())),
+                tokens = mapOf(saved.credentialRef to "fixture-token"), libraryRefreshPending = true
+            ))
+        }
+        val owner = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        try {
+            val repository = ServerRepository(persistence, listOf(provider), owner)
+            repository.ensureLoaded()
+            assertEquals(setOf(saved.id), repository.uiState.value.loadingLibraries)
+            val streams = ServerStreams(repository, ServerMatcher(repository, tmdbService, metaRepository))
+            assertTrue(streams.canServe("movie", "tt0111161"))
+            val source = streams.sources("movie", "tt0111161", null, null).single()
+            gate.complete(Unit)
+            assertEquals("42", source.load().single().serverTarget?.item?.itemId)
+            assertEquals(1, provider.libraryLoads)
+        } finally {
+            gate.complete(Unit)
+            owner.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun anUnrelatedServerEditDoesNotInvalidateAValidResponse() = runBlocking {
+        val (_, repository, connection) = matcher()
+        repository.store(connection.copy(id = "other", credentialRef = "other-token"), "fixture")
+        val response = repository.call(connection.id) { _, _ ->
+            repository.setEnabled("other", false)
+            "valid response"
+        }
+        assertEquals("valid response", response)
+    }
+
+    @Test
+    fun aProfileSwitchRejectsTheOldServerResponse() = runBlocking {
+        val (_, repository, connection) = matcher()
+        try {
+            repository.call(connection.id) { _, _ ->
+                repository.selectProfile(2)
+                "old profile response"
+            }
+            throw AssertionError("old profile response was accepted")
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            assertTrue(repository.uiState.value.connections.isEmpty())
+        }
+    }
+
+    @Test
+    fun seriesAvailabilityRecognizesAnEligibleServerBeforeChoosingAnEpisode() {
+        val (matcher, repository, _) = matcher()
+        val streams = ServerStreams(repository, matcher)
+        assertTrue(streams.canServe("series", "tt0944947"))
+        assertFalse(streams.canServe("series", "unknown:abc"))
+    }
+
+    @Test
     fun sharedLookupAddsServerSourcesForCatalogItems() = runBlocking {
         val provider = FakeServerProvider().apply { indexedIds["42"] = TrackingExternalIds(imdb = "tt0111161") }
         val (matcher, repository, connection) = matcher(provider)

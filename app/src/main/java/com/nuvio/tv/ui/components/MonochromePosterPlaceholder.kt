@@ -23,7 +23,8 @@ import androidx.tv.material3.Icon
 
 @Composable
 fun MonochromePosterPlaceholder(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showPlayIcon: Boolean = true
 ) {
     val base = NuvioTheme.colors.BackgroundCard
     val strokeColor = NuvioTheme.colors.TextTertiary.copy(alpha = 0.28f)
@@ -42,6 +43,7 @@ fun MonochromePosterPlaceholder(
             .fillMaxSize()
             .background(backgroundGradient)
     ) {
+        if (showPlayIcon) {
         Box(
             modifier = Modifier
                 .align(Alignment.Center)
@@ -65,6 +67,7 @@ fun MonochromePosterPlaceholder(
                     .size(NuvioTheme.spacing.xl)
                     .offset(x = NuvioTheme.spacing.hairline)
             )
+        }
         }
     }
 }

@@ -555,7 +555,9 @@ internal fun TrackingSettingsOverview(
                                 if (TrackingProviderId.SIMKL in visibleProviders) {
                                     SettingsActionRow(
                                         title = stringResource(R.string.simkl_name),
-                                        subtitle = simklPresentation.subtitle,
+                                        subtitle = if (simklState.mode == SimklConnectionMode.CONNECTED && trackingState.watchProgressSource != WatchProgressSource.SIMKL) {
+                                            stringResource(R.string.simkl_watch_progress_hint)
+                                        } else simklPresentation.subtitle,
                                         value = simklPresentation.value,
                                         valueColor = simklPresentation.color,
                                         leadingRawIconRes = R.raw.simkl_tv_glyph,

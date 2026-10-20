@@ -66,10 +66,10 @@ class GuideCellIntentTest {
      */
     @Test
     fun `only actionable cells take focus`() {
-        assertFalse("nothing playable", GuideCellIntent.isFocusable(ProgrammeAction.NONE))
-        assertTrue("replay", GuideCellIntent.isFocusable(ProgrammeAction.REPLAY))
-        assertTrue("start over", GuideCellIntent.isFocusable(ProgrammeAction.START_OVER))
-        assertTrue("live", GuideCellIntent.isFocusable(ProgrammeAction.PLAY_LIVE))
+        assertFalse("nothing playable", GuideCellIntent.canActivate(ProgrammeAction.NONE))
+        assertTrue("replay", GuideCellIntent.canActivate(ProgrammeAction.REPLAY))
+        assertTrue("start over", GuideCellIntent.canActivate(ProgrammeAction.START_OVER))
+        assertTrue("live", GuideCellIntent.canActivate(ProgrammeAction.PLAY_LIVE))
     }
 
     /** The badge marks what the panel actually kept — not "this cell is selectable". */

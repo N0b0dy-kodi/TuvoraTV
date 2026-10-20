@@ -9,6 +9,7 @@ import android.provider.OpenableColumns
 import android.view.KeyEvent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -109,7 +110,8 @@ fun XtreamSettingsContent(
     viewModel: XtreamSettingsViewModel = hiltViewModel(),
     onPairFromPhone: () -> Unit = {},
     onEnterSetupCode: () -> Unit = {},
-    initialFocusRequester: FocusRequester? = null
+    initialFocusRequester: FocusRequester? = null,
+    openAddOnEntry: Boolean = false
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val indexingAccounts by viewModel.indexingAccounts.collectAsStateWithLifecycle()
@@ -122,7 +124,7 @@ fun XtreamSettingsContent(
     val managedInfos by viewModel.managedInfos.collectAsStateWithLifecycle()
     val pendingDetails by viewModel.pendingDetails.collectAsStateWithLifecycle()
     var showRegionPicker by remember { mutableStateOf(false) }
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(openAddOnEntry) }
     // Step 2: the details PAGE is open for this playlist id (looked up live, so toggles re-render it).
     var actionsForId by remember { mutableStateOf<String?>(null) }
     // Step 2: "<provider> added this playlist", shown on the page until it is closed (after a redeem).
@@ -264,7 +266,12 @@ fun XtreamSettingsContent(
                 subtitle = listOfNotNull(
                     managedLine,
                     // Step 0.3: say which server is actually answering when it isn't the main one.
-                    activeServers[account.id]?.let { stringResource(R.string.iptv_using_backup_server, it) }
+                    activeServers[account.id]?.let { n ->
+                        account.backupUrls?.getOrNull(n - 1)?.let { address ->
+                            stringResource(R.string.iptv_using_backup_server_host, n,
+                                com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(address))
+                        } ?: stringResource(R.string.iptv_using_backup_server, n)
+                    }
                         // T7: an M3U link carries the login — never on screen.
                         ?: com.nuvio.tv.core.iptv.PlaylistDisplayPolicy.maskedUrl(account.baseUrl),
                     // B60: an edit saved although the provider check failed says so on its row.
@@ -879,6 +886,10 @@ private fun XtreamCategoryChecklistDialog(
 ) {
     val label = CONTENT_TYPES.firstOrNull { it.first == type }?.second ?: type
     val selection = account.categorySelections.forType(type)
+    var filter by remember(account.id, type) { mutableStateOf("") }
+    val filteredCategories = remember(categories, filter) {
+        categories?.filter { it.name.contains(filter.trim(), ignoreCase = true) }.orEmpty()
+    }
     val selectAllFocus = remember { FocusRequester() }
     // The wait ends at its deadline even if the read never returns; a failure offers Retry (BoundedLoad).
     val status = com.nuvio.tv.ui.screens.iptv.rememberEffectiveLoadStatus(load)
@@ -909,12 +920,16 @@ private fun XtreamCategoryChecklistDialog(
                 SettingsDialogActionButton("Select All", onClick = { onSetSelection(null) }, primary = true)
                 SettingsDialogActionButton("Deselect All", onClick = { onSetSelection(emptyList()) })
             }
+            XtreamField(filter, { filter = it }, "Filter categories", onSubmit = {})
+            if (filteredCategories.isEmpty()) {
+                Text("No matching categories", color = NuvioTheme.colors.TextSecondary)
+            }
             LazyColumn(
                 modifier = Modifier.heightIn(max = SettingsDialogListMaxHeight),
                 verticalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm),
                 contentPadding = PaddingValues(vertical = NuvioTheme.spacing.xs)
             ) {
-                items(categories, key = { it.id }) { category ->
+                items(filteredCategories, key = { it.id }) { category ->
                     val checked = selection == null || category.id in selection
                     CategoryCheckRow(
                         name = category.name.ifBlank { "Other" },
@@ -1179,6 +1194,7 @@ private fun XtreamAddDialog(
     var dnsProvider by remember { mutableStateOf(initial?.dnsProvider ?: XtreamAccount.DNS_SYSTEM) }
     var autoRefreshHours by remember { mutableStateOf(initial?.autoRefreshHours ?: XtreamAccount.DEFAULT_AUTO_REFRESH_HOURS) }
     var showRefreshPicker by remember { mutableStateOf(false) }
+    var showConnectionOptions by remember { mutableStateOf(false) }
 
     val firstFieldFocus = remember { FocusRequester() }
     val sourceTypeFocus = remember { FocusRequester() }
@@ -1323,10 +1339,6 @@ private fun XtreamAddDialog(
                         }, "Server URL  (portal, e.g. http://host:port)", firstFieldFocus, onSubmit = submit)
                         XtreamField(user, { user = it }, "Username", onSubmit = submit)
                         XtreamField(pass, { pass = it }, "Password", isPassword = true, onSubmit = submit)
-                        XtreamField(name, { name = it }, "Name (optional)", onSubmit = submit)
-                        // Only needed when a provider firewall blocks the default UA (HTTP 456) —
-                        // pin a player UA the provider allows, e.g. VLC/3.0.20 LibVLC/3.0.20.
-                        XtreamField(xtreamUserAgent, { xtreamUserAgent = it }, "User-Agent (optional)", onSubmit = submit)
                     } else {
                         XtreamField(url, { url = it }, "http://host:port/get.php?username=…&password=…", firstFieldFocus, onSubmit = submit, label = "Playlist URL")
                     }
@@ -1334,10 +1346,6 @@ private fun XtreamAddDialog(
                 XtreamAccount.SOURCE_URL -> UrlSourceFields(
                     url = m3uUrl,
                     onUrlChange = { m3uUrl = it },
-                    userAgent = m3uUserAgent,
-                    onUserAgentChange = { m3uUserAgent = it },
-                    name = name,
-                    onNameChange = { name = it },
                     firstFieldFocus = firstFieldFocus,
                     onSubmit = submit
                 )
@@ -1346,8 +1354,6 @@ private fun XtreamAddDialog(
                     pickedFileName = pickedFileName,
                     reimport = initial?.sourceType == XtreamAccount.SOURCE_FILE,
                     onChooseFile = { runCatching { filePicker.launch(arrayOf("*/*")) } },
-                    name = name,
-                    onNameChange = { name = it },
                     onSubmit = submit
                 )
                 XtreamAccount.SOURCE_STALKER -> StalkerSourceFields(
@@ -1367,6 +1373,26 @@ private fun XtreamAddDialog(
                 )
             }
 
+            // --- EPG URL (shared) --------------------------------------------
+            FormSectionLabel("EPG URLs (optional)")
+            XtreamField(epgUrl, { epgUrl = it }, "https://…/guide.xml.gz, https://…/more.xml", onSubmit = submit, label = "EPG URLs")
+            FormHelperText(
+                "Add one or more XMLTV guides, separated by commas. The first one wins for each channel; " +
+                    "the provider's own guide still covers every channel these don't."
+            )
+
+            XtreamField(name, { name = it }, "Name (optional)", onSubmit = submit)
+            SettingsActionRow(
+                title = "Connection options",
+                subtitle = "User-Agent, backup servers and DNS",
+                value = if (showConnectionOptions) "Expanded" else "Collapsed",
+                onClick = { showConnectionOptions = !showConnectionOptions }
+            )
+            if (showConnectionOptions) {
+                when (sourceType) {
+                    XtreamAccount.SOURCE_URL -> XtreamField(m3uUserAgent, { m3uUserAgent = it }, "User-Agent (optional)", onSubmit = submit)
+                    XtreamAccount.SOURCE_XTREAM -> XtreamField(xtreamUserAgent, { xtreamUserAgent = it }, "User-Agent (optional)", onSubmit = submit)
+                }
             // --- Backup servers (Step 0.3; Xtream / M3U link / Stalker) --------
             if (showsBackups) {
                 BackupServersSection(
@@ -1384,18 +1410,12 @@ private fun XtreamAddDialog(
                 )
             }
 
-            // --- EPG URL (shared) --------------------------------------------
-            FormSectionLabel("EPG URLs (optional)")
-            XtreamField(epgUrl, { epgUrl = it }, "https://…/guide.xml.gz, https://…/more.xml", onSubmit = submit, label = "EPG URLs")
-            FormHelperText(
-                "Add one or more XMLTV guides, separated by commas. The first one wins for each channel; " +
-                    "the provider's own guide still covers every channel these don't."
-            )
-
             // --- DNS Provider (shared) ---------------------------------------
             FormSectionLabel("DNS Provider")
             DnsProviderTiles(selected = dnsProvider, onSelect = { dnsProvider = it })
             FormHelperText("Choose a DNS server for resolving this playlist's addresses. Cloudflare or Google can improve connection reliability.")
+
+            }
 
             // --- Auto-Refresh (shared) ---------------------------------------
             FormSectionLabel("Auto-Refresh")
@@ -1804,10 +1824,6 @@ private fun DnsProviderTiles(selected: String, onSelect: (String) -> Unit) {
 private fun UrlSourceFields(
     url: String,
     onUrlChange: (String) -> Unit,
-    userAgent: String,
-    onUserAgentChange: (String) -> Unit,
-    name: String,
-    onNameChange: (String) -> Unit,
     firstFieldFocus: FocusRequester,
     onSubmit: () -> Unit
 ) {
@@ -1818,19 +1834,6 @@ private fun UrlSourceFields(
     XtreamField(
         url, onUrlChange, "M3U URL  (http://host/get.php?…&type=m3u_plus  or  …/playlist.m3u)",
         firstFieldFocus, imeAction = ImeAction.Next, onSubmit = onSubmit,
-        onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
-    )
-    // User-Agent and Name also have fields below them (each other, then the shared EPG URL). Chain
-    // the on-screen-keyboard "Next" down the form so it never submits before the EPG URL field is
-    // reachable — the Fire TV keyboard "Done" on any of these used to save-and-close the whole form.
-    XtreamField(
-        userAgent, onUserAgentChange, "User-Agent (optional)",
-        imeAction = ImeAction.Next, onSubmit = onSubmit,
-        onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
-    )
-    XtreamField(
-        name, onNameChange, "Name (optional)",
-        imeAction = ImeAction.Next, onSubmit = onSubmit,
         onImeAction = { focusManager.moveFocus(FocusDirection.Down) },
     )
     FormHelperText("Paste the playlist URL. The whole list is downloaded and indexed once so it browses fast; large lists take a moment after saving.")
@@ -1851,8 +1854,6 @@ private fun FileSourceFields(
     pickedFileName: String,
     reimport: Boolean,
     onChooseFile: () -> Unit,
-    name: String,
-    onNameChange: (String) -> Unit,
     onSubmit: () -> Unit
 ) {
     if (!pickerAvailable) {
@@ -1868,7 +1869,6 @@ private fun FileSourceFields(
         value = null,
         onClick = onChooseFile
     )
-    XtreamField(name, onNameChange, "Name (optional)", onSubmit = onSubmit)
     FormHelperText("The file is copied into the app so it keeps working if the original moves or is deleted. File contents don't sync across devices.")
 }
 
@@ -1909,6 +1909,14 @@ private fun StalkerSourceFields(
         value = null,
         onClick = { onMacChange(randomStbMac()) }
     )
+    var showIdentityOptions by remember { mutableStateOf(false) }
+    SettingsActionRow(
+        title = "Portal identity options",
+        subtitle = "Only needed when your provider supplies specific box details",
+        value = if (showIdentityOptions) "Expanded" else "Collapsed",
+        onClick = { showIdentityOptions = !showIdentityOptions }
+    )
+    if (showIdentityOptions) {
     XtreamField(username, onUsernameChange, "Username (optional)", onSubmit = onSubmit)
     XtreamField(password, onPasswordChange, "Password (optional)", isPassword = true, onSubmit = onSubmit)
     XtreamField(serial, onSerialChange, "Serial Number (optional)", onSubmit = onSubmit)
@@ -1918,11 +1926,12 @@ private fun StalkerSourceFields(
     XtreamField(stbModel, onStbModelChange, "STB Model (optional, e.g. MAG254)", onSubmit = onSubmit)
     XtreamField(hwVersion, onHwVersionChange, "Hardware Version (optional, e.g. 2.6-IB-00)", onSubmit = onSubmit)
     SettingsActionRow(
-        title = "Send Device ID",
-        subtitle = "Include device identifier in portal requests",
+        title = "Send signature",
+        subtitle = "Include the signature in portal requests",
         value = if (sendDeviceId) "On" else "Off",
         onClick = { onSendDeviceIdChange(!sendDeviceId) }
     )
+    }
     FormHelperText("Enter your portal URL and the MAC registered with the provider. The serial, device IDs and signature are derived from the MAC and Tuvora presents itself as a MAG250 — only fill in the optional fields if your provider (or your old box) gave you specific values. Long values are easier to enter from your phone: use \"Add from phone\".")
 }
 
@@ -2054,15 +2063,21 @@ private fun XtreamField(
             .onKeyEvent { event ->
                 val native = event.nativeKeyEvent
                 when {
-                    native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER && native.action == KeyEvent.ACTION_DOWN -> true
-                    (native.keyCode == KeyEvent.KEYCODE_ENTER || native.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) &&
-                        native.action == KeyEvent.ACTION_DOWN -> { onImeAction(); true }
+                    (native.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || native.keyCode == KeyEvent.KEYCODE_ENTER || native.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) &&
+                        native.action == KeyEvent.ACTION_DOWN -> {
+                        editing = false; keyboard?.hide(); runCatching { rowFocus.requestFocus() }
+                        if (imeAction == ImeAction.Next) onImeAction()
+                        true
+                    }
                     else -> false
                 }
             },
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = imeAction),
-        keyboardActions = KeyboardActions(onDone = { onImeAction() }, onNext = { onImeAction() }),
+        keyboardActions = KeyboardActions(
+            onDone = { editing = false; keyboard?.hide(); runCatching { rowFocus.requestFocus() } },
+            onNext = { editing = false; keyboard?.hide(); runCatching { rowFocus.requestFocus() }; onImeAction() }
+        ),
         visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
         textStyle = MaterialTheme.typography.bodyMedium.copy(color = NuvioTheme.colors.TextPrimary),
         cursorBrush = SolidColor(if (fieldFocused) NuvioTheme.colors.TextPrimary else Color.Transparent),
@@ -2104,14 +2119,7 @@ private fun XtreamAddButton(
                 shape
             )
             .onFocusChanged { focused = it.isFocused }
-            .focusable()
-            .onKeyEvent {
-                if (enabled &&
-                    (it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
-                        it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ENTER) &&
-                    it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN
-                ) { onClick(); true } else false
-            }
+            .clickable(enabled = enabled && !isValidating, onClick = onClick)
             .padding(vertical = NuvioTheme.spacing.md),
         contentAlignment = Alignment.Center
     ) {

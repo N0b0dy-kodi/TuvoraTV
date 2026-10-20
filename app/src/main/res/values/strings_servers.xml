@@ -29,7 +29,7 @@
     <string name="servers_remove_confirm_message">This signs you out of %1$s on this device. You can add it back anytime.</string>
     <string name="servers_signed_in_as">%1$s · %2$s</string>
     <string name="servers_status_disabled">Disabled</string>
-    <string name="servers_status_auth">Sign in again</string>
+    <string name="servers_status_auth">Sign in on this device</string>
     <string name="servers_status_cert_changed">Certificate changed</string>
     <string name="servers_status_cert_untrusted">Certificate not trusted</string>
     <string name="servers_status_unreachable">Server unavailable</string>
@@ -66,9 +66,9 @@
     <string name="servers_plain_http_message">%1$s does not offer HTTPS. Continuing sends your sign-in details over plain HTTP, which anyone on the network can read. Only continue on a network you trust.</string>
     <string name="servers_plain_http_continue">Continue over HTTP</string>
     <string name="servers_cert_title">Trust this certificate?</string>
-    <string name="servers_cert_body">%1$s uses a certificate your device does not trust. Only continue if you recognise this fingerprint. It is saved on this device for this server only.</string>
+    <string name="servers_cert_body">%1$s uses a certificate your device does not trust. Only continue if you recognise this fingerprint. It is saved on this device for this server only. Trust also applies to artwork and playback.</string>
     <string name="servers_cert_changed_title">Certificate changed</string>
-    <string name="servers_cert_changed_body">The certificate of %1$s is different from the one you trusted before. This can mean someone is intercepting the connection. Only trust the new one if you changed it yourself.</string>
+    <string name="servers_cert_changed_body">The certificate of %1$s is different from the one you trusted before. This can mean someone is intercepting the connection. Only trust the new one if you changed it yourself. Trust also applies to artwork and playback.</string>
     <string name="servers_cert_fingerprint">SHA-256 fingerprint</string>
     <string name="servers_cert_previous">Trusted before</string>
     <string name="servers_cert_presented">Presented now</string>

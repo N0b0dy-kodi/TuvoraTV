@@ -936,6 +936,21 @@ private fun SubtitleStyleRail(
                 }
             }
             item {
+                OverlaySectionCard(title = stringResource(R.string.subtitle_style_side_padding)) {
+                    StepperRow(
+                        value = "${subtitleStyle.sideMarginPercent}%",
+                        onDecrease = { onEvent(PlayerEvent.OnSetSubtitleSideMargin((subtitleStyle.sideMarginPercent - 1).coerceAtLeast(0))) },
+                        onIncrease = { onEvent(PlayerEvent.OnSetSubtitleSideMargin((subtitleStyle.sideMarginPercent + 1).coerceAtMost(com.nuvio.tv.core.picture.SubtitleSideMargin.MAX_PERCENT))) },
+                        onMoveLeft = onMoveLeft,
+                        decrementFocusRequester = focusRequesters[StyleFocusKey.SideMarginDecrease],
+                        incrementFocusRequester = focusRequesters[StyleFocusKey.SideMarginIncrease],
+                        decrementFocusKey = StyleFocusKey.SideMarginDecrease,
+                        incrementFocusKey = StyleFocusKey.SideMarginIncrease,
+                        onFocusChanged = onStyleFocused
+                    )
+                }
+            }
+            item {
                 Card(
                     onClick = { onEvent(PlayerEvent.OnResetSubtitleDefaults) },
                     colors = overlayCardColors(selected = false),
@@ -1583,6 +1598,8 @@ private object StyleFocusKey {
     const val OffsetDecrease = "offset_decrease"
     const val OffsetIncrease = "offset_increase"
     const val DelaySet = "delay_set"
+    const val SideMarginDecrease = "side_margin_decrease"
+    const val SideMarginIncrease = "side_margin_increase"
     const val Reset = "reset"
     const val TextColorPrefix = "text_color"
     const val OpacityDecrease = "opacity_decrease"
@@ -1605,7 +1622,8 @@ private fun styleListIndexForFocusKey(focusKey: String): Int {
         focusKey == StyleFocusKey.OpacityDecrease || focusKey == StyleFocusKey.OpacityIncrease -> 4
         focusKey == StyleFocusKey.OutlineToggle || focusKey.startsWith("${StyleFocusKey.OutlineColorPrefix}:") -> 5
         focusKey == StyleFocusKey.OffsetDecrease || focusKey == StyleFocusKey.OffsetIncrease -> 6
-        focusKey == StyleFocusKey.Reset -> 7
+        focusKey == StyleFocusKey.SideMarginDecrease || focusKey == StyleFocusKey.SideMarginIncrease -> 7
+        focusKey == StyleFocusKey.Reset -> 8
         else -> 0
     }
 }
@@ -1628,6 +1646,8 @@ private fun rememberStyleFocusRequesters(): Map<String, FocusRequester> {
             StyleFocusKey.OffsetDecrease,
             StyleFocusKey.OffsetIncrease,
             StyleFocusKey.DelaySet,
+            StyleFocusKey.SideMarginDecrease,
+            StyleFocusKey.SideMarginIncrease,
             StyleFocusKey.Reset
         ).associateWith { FocusRequester() } +
             OverlayTextColors.associate { color ->

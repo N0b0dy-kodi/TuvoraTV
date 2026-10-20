@@ -231,7 +231,7 @@ fun ProfileSelectionScreen(
         profileBackgroundCatalog.associateBy { it.id }
     }
     val memberAccess = Membership.access
-    var focusedAvatarColor by remember { mutableStateOf(Color(0xFF1E88E5)) }
+    var focusedAvatarColor by remember { mutableStateOf(Color(0xFF121212)) }
     var focusedProfileId by remember { mutableStateOf<Int?>(null) }
     var showCreateProfile by remember { mutableStateOf(false) }
     var longPressedProfile by remember { mutableStateOf<UserProfile?>(null) }
@@ -825,10 +825,10 @@ private fun ProfileSelectionBackground(
     // Otherwise, profile selector and splash screen needs to know about user template
     val baseBg = Color(0xFF121212)
     val baseBgElevated = Color(0xFF1E1E1E)
-    val gradientTop = lerp(baseBgElevated, animatedAvatarColor, 0.3f)
-    val gradientMid = lerp(baseBg, animatedAvatarColor, 0.14f)
-    val halfFadeStrong = animatedAvatarColor.copy(alpha = 0.26f)
-    val halfFadeSoft = animatedAvatarColor.copy(alpha = 0.08f)
+    val gradientTop = lerp(baseBgElevated, animatedAvatarColor, 0.06f)
+    val gradientMid = lerp(baseBg, animatedAvatarColor, 0.025f)
+    val halfFadeStrong = animatedAvatarColor.copy(alpha = 0.04f)
+    val halfFadeSoft = animatedAvatarColor.copy(alpha = 0.01f)
 
     AnimatedContent(
         targetState = profileBackground,

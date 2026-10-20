@@ -758,7 +758,7 @@ class FolderDetailViewModel @Inject constructor(
                     if (tabIndex < tabs.size) {
                         tabs[tabIndex] = tabs[tabIndex].copy(
                             isLoading = false,
-                            error = appContext.getString(R.string.addon_error_not_found)
+                            error = appContext.getString(R.string.collections_source_missing_help)
                         )
                     }
                     state.copy(tabs = tabs)

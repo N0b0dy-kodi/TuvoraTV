@@ -15,8 +15,8 @@ enum class NoAddonsHint {
 object NoAddonsHintPolicy {
     fun hint(addonsEnabled: Boolean, hasAnyIptvPlaylist: Boolean): NoAddonsHint =
         when {
-            addonsEnabled -> NoAddonsHint.INSTALL_ADDONS
             hasAnyIptvPlaylist -> NoAddonsHint.PLAYLIST_PRESENT
+            addonsEnabled -> NoAddonsHint.INSTALL_ADDONS
             else -> NoAddonsHint.ADD_IPTV_PLAYLIST
         }
 }

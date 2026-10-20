@@ -49,6 +49,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -166,10 +168,12 @@ fun LiveGuide(
         targetValue = if (inCategory) 0.dp else CATEGORY_COL_WIDTH,
         label = "guideCategoryColumnWidth"
     )
-    LaunchedEffect(pendingCategoryFocus, inCategory) {
-        if (pendingCategoryFocus && !inCategory) {
-            runCatching { categoryListFocus.requestFocus() }
-            pendingCategoryFocus = false
+    LaunchedEffect(pendingCategoryFocus, inCategory, categoryColWidth) {
+        // A zero-width focus region cannot accept focus. Transfer after expansion, not in
+        // the same frame that requests it; otherwise the viewer has to press Left twice.
+        if (pendingCategoryFocus && !inCategory && categoryColWidth >= CATEGORY_COL_WIDTH) {
+            withFrameNanos { }
+            if (categoryListFocus.requestFocusOrFalse()) pendingCategoryFocus = false
         }
     }
     fun exitCategory() {
@@ -178,10 +182,34 @@ fun LiveGuide(
     }
     // focusRestorer with no saved child fails the enter and focus wanders — fall back to row 1.
     val firstChannelFocus = remember { FocusRequester() }
+    val returnToNowFocus = remember { FocusRequester() }
+    val channelListState = rememberLazyListState()
+    // Requester identity belongs to the channel, not to whichever row is currently focused.
+    // Rebinding it during the Undo handoff can make LazyColumn restore its fallback row.
+    val channelRowRequesters = remember(account.id) { mutableMapOf<String, FocusRequester>() }
+    fun requestFocusedChannel(): Boolean = uiState.focusedChannel?.entityId
+        ?.let { channelRowRequesters[it]?.requestFocusOrFalse() } == true
+    var pendingRestoreEntityId by remember(account.id, uiState.selectedCategoryId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingRestoreEntityId, uiState.channels) {
+        val origin = pendingRestoreEntityId ?: return@LaunchedEffect
+        val index = uiState.channels.indexOfFirst { it.entityId == origin }
+        if (index < 0) return@LaunchedEffect // The overlay projection has not restored it yet.
+        channelListState.scrollToItem(index)
+        // Let the removed toast and restored lazy item settle before retiring the intent.
+        // The permanent requester survives the intent being cleared.
+        repeat(3) {
+            withFrameNanos { }
+            channelRowRequesters[origin]?.requestFocusOrFalse()
+        }
+        pendingRestoreEntityId = null
+    }
 
     // Focus inside the timeline: which channel's cells the cursor is in, and which edge to restore
     // to after the window scrolls (the cell that was focused no longer exists once it rebuilds).
     var timelineChannelId by remember { mutableStateOf<String?>(null) }
+    var inspectedProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
+    val awayFromNow = !GuideTimeTravel.isAtLiveEdge(windowStartMs, nowMs)
+    LaunchedEffect(uiState.focusedChannelId, windowStartMs) { inspectedProgramme = null }
     var pendingEdgeFocus by remember { mutableStateOf(0) }
     // The window that page left from: the landing waits until the window has actually moved off it
     // (it arrives from the ViewModel a frame or more after the key).
@@ -191,12 +219,9 @@ fun LiveGuide(
     // The timeline row's own strip: where the cursor waits when the window holds nothing to press
     // (the future, or the past of a channel with no archive), so LEFT/RIGHT keep travelling (B114).
     val timelineStripFocus = remember { FocusRequester() }
-    val channelRowFocus = remember { FocusRequester() }
     // Shown only for the airing programme on an archive channel — the one state with two
     // reasonable destinations (see GuideCellIntent).
     var sheetProgramme by remember { mutableStateOf<XtreamProgram?>(null) }
-    // F02: the category MENU was pressed on, awaiting "Hide group" / Cancel.
-    var hideCategoryAsk by remember { mutableStateOf<GuideCategory?>(null) }
     // F03: MENU on a favourite or a pinned channel: Move up / Move down / Remove or Hide.
     var channelMenuAsk by remember { mutableStateOf<Pair<GuideChannel, List<GuideChannelMenuPolicy.Action>>?>(null) }
     // F01: the channel-search keyboard dialog.
@@ -223,7 +248,7 @@ fun LiveGuide(
         // keeps travelling — dropping it on the channel row made the next RIGHT reset the guide to
         // now, which is how travel read as impossible (B114). See GuideTimelineNavPolicy.
         if (!target.requestFocusOrFalse() && !timelineStripFocus.requestFocusOrFalse()) {
-            channelRowFocus.requestFocusOrFalse()
+            requestFocusedChannel()
             timelineChannelId = null
         }
         pendingEdgeFocus = 0
@@ -234,21 +259,22 @@ fun LiveGuide(
     // exits the guide — LEFT/RIGHT are spent on travelling, so BACK is the way out.
     fun leaveTimelineToNow() {
         timelineChannelId = null
+        inspectedProgramme = null
         sheetProgramme = null
         viewModel.resetWindowToLive()
-        if (!channelRowFocus.requestFocusOrFalse()) {
+        if (!requestFocusedChannel()) {
             firstChannelFocus.requestFocusOrFalse()
         }
     }
     // The timeline's cells answer BACK themselves (Compose turns a BACK on a cell into
     // FocusDirection.Exit before any BackHandler sees it); this covers the cursor on the row itself.
-    BackHandler(enabled = !fullscreen && timelineChannelId != null) { leaveTimelineToNow() }
+    BackHandler(enabled = !fullscreen && (timelineChannelId != null || awayFromNow)) { leaveTimelineToNow() }
 
     // ...and then BACK unwinds the category depth before it leaves the guide. Entering a category
     // is now a navigation step (the column collapses), so BACK has to undo that step rather than
     // exiting the screen from underneath it. Guarded against the timeline handler above (and
     // against fullscreen, whose own handler collapses the video) so exactly one is ever enabled.
-    BackHandler(enabled = !fullscreen && timelineChannelId == null && inCategory) {
+    BackHandler(enabled = !fullscreen && timelineChannelId == null && !awayFromNow && inCategory) {
         exitCategory()
     }
 
@@ -264,6 +290,9 @@ fun LiveGuide(
     val playbackState by playbackViewModel.state.collectAsStateWithLifecycle()
     val readyPlayback = playbackState as? CleanLiveGuidePlaybackState.Ready
     val playbackUi = readyPlayback?.presentation
+    com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(
+        active = fullscreen || playbackUi?.playWhenReady == true
+    )
     val playingContentId = readyPlayback?.target?.contentId?.value
     var requestedContentId by remember(account.id) { mutableStateOf<String?>(null) }
     val pendingSelection by playbackViewModel.pendingSelection.collectAsStateWithLifecycle()
@@ -346,7 +375,7 @@ fun LiveGuide(
         // the guide on the aimed channel (row 1 if that row isn't composed).
         if (anchorUsed) {
             anchorUsed = false
-            if (!channelRowFocus.requestFocusOrFalse()) firstChannelFocus.requestFocusOrFalse()
+            if (!requestFocusedChannel()) firstChannelFocus.requestFocusOrFalse()
         }
     }
     var zapBack by remember(account.id) { mutableStateOf(LiveZapBack()) }
@@ -488,7 +517,7 @@ fun LiveGuide(
                         upFocus = if (index == 0) selectedTabRequester else null,
                         onFocused = { viewModel.selectCategory(cat.id) },
                         // F02: MENU on a provider category offers to hide it (Favorites/Recent/All can't be hidden).
-                        onMenu = if (cat.special == null) { { hideCategoryAsk = cat } } else null,
+                        onMenu = if (cat.special == null) { { viewModel.hideCategory(cat) } } else null,
                         // F01: OK on "Search" opens the keyboard (focus alone never does).
                         onClick = if (cat.special == GuideSpecial.SEARCH) { { searchDialogOpen = true } } else null,
                     )
@@ -504,6 +533,13 @@ fun LiveGuide(
                         channelName = uiState.focusedChannel?.name,
                         epg = uiState.focusedChannel?.let { uiState.epg[it.streamId] },
                         nowMs = nowMs,
+                        inspectedProgramme = inspectedProgramme,
+                        viewedTimeMs = if (awayFromNow) windowStartMs else null,
+                        emptyGuideMessage = stringResource(when {
+                            uiState.channels.isEmpty() && (uiState.selectedCategoryId == "__fav" || uiState.selectedCategoryId == "__allfav") -> R.string.iptv_guide_favorites_empty
+                            awayFromNow -> R.string.iptv_guide_empty_window
+                            else -> R.string.iptv_guide_data_unavailable
+                        }),
                         // A playback notice (stopped / can't open / no recording) shows here beside the
                         // channel name instead of over the channel grid, so the list stays visible.
                         previewError = (playbackError.takeIf {
@@ -513,6 +549,20 @@ fun LiveGuide(
                     )
                 }
 
+                if (awayFromNow) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = NuvioTheme.spacing.md),
+                        horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.iptv_guide_browsing_schedule),
+                            style = MaterialTheme.typography.labelMedium, color = NuvioTheme.colors.TextSecondary)
+                        Spacer(Modifier.width(NuvioTheme.spacing.md))
+                        Button(onClick = { leaveTimelineToNow() }, modifier = Modifier
+                            .focusRequester(returnToNowFocus)
+                            .focusProperties {
+                                down = firstChannelFocus
+                                up = selectedTabRequester ?: FocusRequester.Default
+                            }) { Text(stringResource(R.string.iptv_guide_return_now)) }
+                    }
+                }
                 GuideTimeHeaderWithDay(
                     windowStartMs = windowStartMs,
                     nowMs = nowMs,
@@ -558,6 +608,7 @@ fun LiveGuide(
                         height = 280.dp
                     )
                     else -> LazyColumn(
+                        state = channelListState,
                         modifier = Modifier.fillMaxSize()
                             .focusRequester(channelListFocus)
                             // Focus arriving anywhere in the guide means the viewer has committed
@@ -571,14 +622,10 @@ fun LiveGuide(
                             val isPlaying = ch.contentId == playingContentId
                             val isTimelineRow = timelineChannelId == ch.contentId
                             GuideChannelRow(
-                                focusRequester = when {
-                                    // Row 0 keeps the restorer's fallback requester; any OTHER
-                                    // focused row carries the one BACK-out-of-the-timeline uses.
-                                    index == 0 -> firstChannelFocus
-                                    ch.contentId == uiState.focusedChannelId -> channelRowFocus
-                                    else -> null
-                                },
+                                focusRequester = channelRowRequesters.getOrPut(ch.entityId) { FocusRequester() },
+                                entryFocusRequester = if (index == 0) firstChannelFocus else null,
                                 clampUp = index == 0,
+                                upFocusRequester = if (awayFromNow && index == 0) returnToNowFocus else null,
                                 number = index + 1,
                                 name = ch.name,
                                 // A play glyph icon marks what the preview player is tuned to.
@@ -639,6 +686,7 @@ fun LiveGuide(
                                     }
                                 },
                                 onBackOutOfTimeline = { leaveTimelineToNow() },
+                                onProgrammeFocused = { inspectedProgramme = it },
                                 onProgrammeClick = { programme ->
                                     when (GuideCellIntent.forAction(
                                         guideActionFor(programme, ch, nowMs, uiState.catchUpSupported)
@@ -910,31 +958,6 @@ fun LiveGuide(
             }
         }
 
-        hideCategoryAsk?.let { cat ->
-            val cancelFocus = remember { FocusRequester() }
-            LaunchedEffect(cat.id) { cancelFocus.requestFocus() }
-            NuvioDialog(
-                onDismiss = { hideCategoryAsk = null },
-                title = "Hide \u201C${cat.name}\u201D?",
-                subtitle = "Its channels leave the guide on all your devices. Bring it back any time in " +
-                    "Settings \u2192 Integrations \u2192 IPTV playlists \u2192 this playlist \u2192 Hidden channels & groups.",
-                width = 460.dp
-            ) {
-                Button(
-                    onClick = {
-                        viewModel.hideCategory(cat)
-                        hideCategoryAsk = null
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Hide group") }
-                // Focus starts on Cancel so a stray OK can't hide.
-                Button(
-                    onClick = { hideCategoryAsk = null },
-                    modifier = Modifier.fillMaxWidth().focusRequester(cancelFocus)
-                ) { Text("Cancel") }
-            }
-        }
-
         // F03: All favorites spans playlists — another playlist's channel switches the guide to that
         // playlist (the host owns the account), then tunes the channel once it is listed there.
         LaunchedEffect(uiState.switchAccountRequest) {
@@ -954,7 +977,7 @@ fun LiveGuide(
         uiState.favoriteNotice?.let { notice ->
             fun restoreFavoriteFocus() {
                 if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
-                else if (!channelRowFocus.requestFocusOrFalse() && !channelListFocus.requestFocusOrFalse()) {
+                else if (!requestFocusedChannel() && !channelListFocus.requestFocusOrFalse()) {
                     categoryListFocus.requestFocusOrFalse()
                 }
             }
@@ -986,7 +1009,7 @@ fun LiveGuide(
             fun restoreGuideFocus() {
                 when (notice.target) {
                     is GuideHideUndoPolicy.Target.Channel ->
-                        if (!channelRowFocus.requestFocusOrFalse()) {
+                        if (!requestFocusedChannel()) {
                             channelListFocus.requestFocusOrFalse()
                         }
                     is GuideHideUndoPolicy.Target.Group -> runCatching { categoryListFocus.requestFocus() }
@@ -1001,7 +1024,11 @@ fun LiveGuide(
                 },
                 actionLabel = stringResource(R.string.iptv_guide_hidden_undo),
                 onAction = {
-                    restoreGuideFocus()
+                    if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
+                    else when (val target = notice.target) {
+                        is GuideHideUndoPolicy.Target.Channel -> pendingRestoreEntityId = target.entityId
+                        is GuideHideUndoPolicy.Target.Group -> { exitCategory() }
+                    }
                     viewModel.undoHide()
                 },
                 onDismiss = {
@@ -1203,12 +1230,14 @@ internal fun GuideChannelRow(
     isPinned: Boolean,
     lockFocus: Boolean,
     clampUp: Boolean = false,
+    upFocusRequester: FocusRequester? = null,
     onFocused: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     /** MENU on the focused row: hide the channel (B106). */
     onHide: () -> Unit,
     focusRequester: FocusRequester? = null,
+    entryFocusRequester: FocusRequester? = null,
     channel: GuideChannel,
     catchUpSupported: Boolean,
     timelineActive: Boolean,
@@ -1220,6 +1249,7 @@ internal fun GuideChannelRow(
     /** BACK from inside the timeline: leave it and return the guide to now, in one press (B114). */
     onBackOutOfTimeline: () -> Unit,
     onProgrammeClick: (XtreamProgram) -> Unit,
+    onProgrammeFocused: (XtreamProgram) -> Unit = {},
     leadingEdgeFocus: FocusRequester? = null,
     trailingEdgeFocus: FocusRequester? = null,
     /** The timeline strip's requester — where entering lands when no cell is actionable (B114). */
@@ -1256,6 +1286,7 @@ internal fun GuideChannelRow(
                 if (isFocused) NuvioTheme.colors.Primary else Color.Transparent,
                 RoundedCornerShape(NuvioTheme.radii.sm)
             )
+            .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .focusProperties {
                 if (lockFocus) {
@@ -1264,8 +1295,8 @@ internal fun GuideChannelRow(
                     up = FocusRequester.Cancel
                     down = FocusRequester.Cancel
                 } else if (clampUp) {
-                    // Top of the channel list stops here — never escapes to the tab row.
-                    up = FocusRequester.Cancel
+                    // In travelled time, the explicit recovery action is one Up from row one.
+                    up = upFocusRequester ?: FocusRequester.Cancel
                 }
             }
             .onFocusChanged { isFocused = it.isFocused }
@@ -1365,6 +1396,7 @@ internal fun GuideChannelRow(
             catchUpSupported = catchUpSupported,
             interactive = timelineActive,
             onProgrammeClick = onProgrammeClick,
+            onProgrammeFocused = onProgrammeFocused,
             onTravel = onTravel,
             leadingEdgeFocus = leadingEdgeFocus,
             trailingEdgeFocus = trailingEdgeFocus,
@@ -1384,6 +1416,9 @@ internal fun PreviewInfoPane(
     nowMs: Long,
     previewError: String?,
     modifier: Modifier = Modifier,
+    inspectedProgramme: XtreamProgram? = null,
+    viewedTimeMs: Long? = null,
+    emptyGuideMessage: String? = null,
 ) {
     Column(
         modifier = modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = NuvioTheme.spacing.md)
@@ -1396,8 +1431,9 @@ internal fun PreviewInfoPane(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        val currentEpg = remember(epg, nowMs) { epg?.let { GuideWindowRows.atTime(it, nowMs) } }
-        val now = currentEpg?.now
+        val currentEpg = remember(epg, nowMs, viewedTimeMs) { epg?.let { GuideWindowRows.atTime(it, viewedTimeMs ?: nowMs) } }
+        val now = inspectedProgramme ?: currentEpg?.now
+        val airingNow = now != null && nowMs in now.startMs until now.endMs
         if (previewError != null) {
             // A playback notice for the focused channel — takes the info slot so it never covers
             // the channel grid; the list stays focusable so OK on the channel re-tunes.
@@ -1427,7 +1463,8 @@ internal fun PreviewInfoPane(
                     color = NuvioTheme.colors.TextSecondary
                 )
                 Spacer(Modifier.width(NuvioTheme.spacing.md))
-                // Progress through the current programme (TiviMate's ── ● ── bar).
+                if (airingNow) {
+                // Progress belongs to an airing broadcast, not a future/past inspection.
                 val durationMs = (now.endMs - now.startMs).coerceAtLeast(1L)
                 val progress = ((nowMs - now.startMs).toFloat() / durationMs).coerceIn(0f, 1f)
                 Box(
@@ -1452,6 +1489,7 @@ internal fun PreviewInfoPane(
                     color = NuvioTheme.colors.TextSecondary,
                     maxLines = 1
                 )
+                }
             }
             if (now.description.isNotBlank()) {
                 Spacer(Modifier.height(NuvioTheme.spacing.sm))
@@ -1466,13 +1504,16 @@ internal fun PreviewInfoPane(
         } else {
             Spacer(Modifier.height(2.dp))
             Text(
-                text = stringResource(R.string.iptv_guide_no_information),
+                text = emptyGuideMessage ?: stringResource(R.string.iptv_guide_no_information),
                 style = MaterialTheme.typography.bodyMedium,
                 color = NuvioTheme.colors.TextSecondary
             )
         }
         Spacer(Modifier.weight(1f))
-        currentEpg?.next?.let { next ->
+        val nextProgramme = if (inspectedProgramme != null) {
+            epg?.programmes?.filter { it.startMs >= inspectedProgramme.endMs }?.minByOrNull { it.startMs }
+        } else currentEpg?.next
+        nextProgramme?.let { next ->
             Text(
                 text = stringResource(R.string.iptv_guide_next_programme, timeRange(next), next.title),
                 style = MaterialTheme.typography.labelMedium,

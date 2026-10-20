@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -22,7 +23,8 @@ import kotlin.random.Random
 data class ServersUiState(
     val connections: List<ServerConnection> = emptyList(),
     val failures: Map<String, ServerFailure> = emptyMap(),
-    val revision: Int = 0
+    val revision: Int = 0,
+    val loadingLibraries: Set<String> = emptySet()
 ) {
     val enabledConnections: List<ServerConnection>
         get() = connections.filter { it.enabled }
@@ -57,8 +59,10 @@ class ServerRepository(
     val localChanges: SharedFlow<Int> = mutableLocalChanges.asSharedFlow()
 
     fun ensureLoaded() {
-        val profileId = activeProfileId
-        if (loadedProfileId != profileId) load(profileId)
+        synchronized(lock) {
+            val profileId = activeProfileId
+            if (loadedProfileId != profileId) load(profileId)
+        }
     }
 
     fun selectProfile(profileId: Int) {
@@ -91,22 +95,24 @@ class ServerRepository(
         connectionId: String,
         block: suspend (ServerProvider, ServerSession) -> T
     ): T {
-        val startedGeneration = generation
         val connection = connection(connectionId) ?: throw ServerException(ServerFailure.NOT_FOUND)
         if (!connection.enabled) throw ServerException(ServerFailure.UNREACHABLE)
         val session = session(connectionId) ?: throw ServerException(ServerFailure.AUTH_REQUIRED)
         val provider = provider(session.connection) ?: throw ServerException(ServerFailure.UNSUPPORTED)
+        val startedScope = libraryLoadEpoch
+        fun isCurrent() = startedScope == libraryLoadEpoch &&
+            mutableState.value.connections.firstOrNull { it.id == connectionId } == connection
         return try {
             block(provider, session).also {
-                if (startedGeneration != generation) throw CancellationException("Server scope changed")
-                setFailure(connectionId, null)
+                if (!isCurrent()) throw CancellationException("Server scope changed")
+                setFailure(connectionId, null, startedScope, connection)
             }
         } catch (error: ServerException) {
-            if (startedGeneration == generation &&
+            if (isCurrent() &&
                 (error.failure == ServerFailure.AUTH_REQUIRED || error.failure == ServerFailure.UNREACHABLE ||
                     error.failure == ServerFailure.CERTIFICATE_UNTRUSTED || error.failure == ServerFailure.CERTIFICATE_CHANGED)
             ) {
-                setFailure(connectionId, error.failure)
+                setFailure(connectionId, error.failure, startedScope, connection)
             }
             throw error
         }
@@ -172,8 +178,10 @@ class ServerRepository(
     }
 
     suspend fun refreshLibraries(connectionId: String) {
+        ensureLoaded()
+        val epoch = libraryLoadEpoch
         val libraries = call(connectionId) { provider, session -> provider.libraries(session) }
-        updateConnection(connectionId) { it.copy(libraries = mergeLibraries(it.libraries, libraries)) }
+        updateConnection(connectionId, expectedEpoch = epoch) { it.copy(libraries = mergeLibraries(it.libraries, libraries)) }
     }
 
     fun setLibrarySelected(connectionId: String, libraryId: String, selected: Boolean) {
@@ -298,33 +306,57 @@ class ServerRepository(
     }
 
     override fun clearAllProfiles() {
-        trust?.clearAll()
-        generation++
-        synchronized(lock) { tokens = emptyMap() }
-        loadedProfileId = null
-        pendingPush = false
-        syncedKeys = null
-        runCatching { persistence.clear() }.onFailure { Log.w(TAG, "Unable to clear server storage", it) }
-        mutableState.value = ServersUiState(revision = mutableState.value.revision + 1)
+        synchronized(lock) {
+            libraryLoadEpoch++
+            trust?.clearAll()
+            generation++
+            synchronized(lock) { tokens = emptyMap() }
+            loadedProfileId = null
+            pendingPush = false
+            syncedKeys = null
+            runCatching { persistence.clear() }.onFailure { Log.w(TAG, "Unable to clear server storage", it) }
+            mutableState.value = ServersUiState(revision = mutableState.value.revision + 1)
+        }
+    }
+
+    @Volatile
+    private var libraryLoadEpoch = 0L
+
+    internal suspend fun awaitLibraries(connectionId: String) {
+        val epoch = libraryLoadEpoch
+        val waiting = connectionId in uiState.value.loadingLibraries
+        val state = if (waiting) uiState.first { connectionId !in it.loadingLibraries } else uiState.value
+        if (epoch != libraryLoadEpoch) throw CancellationException("Server scope changed")
+        val failure = state.failures[connectionId]
+        if (failure != null && (waiting || state.connections.firstOrNull { it.id == connectionId }?.libraries.isNullOrEmpty() ||
+                failure == ServerFailure.AUTH_REQUIRED || failure == ServerFailure.CERTIFICATE_CHANGED || failure == ServerFailure.CERTIFICATE_UNTRUSTED)) {
+            throw ServerException(failure)
+        }
     }
 
     private fun load(profileId: Int) {
-        generation++
-        val stored = readStored(profileId)
-        synchronized(lock) { tokens = stored.tokens }
-        pendingPush = stored.pendingPush
-        syncedKeys = stored.syncedKeys?.toSet()
-        libraryRefreshPending = stored.libraryRefreshPending
-        loadedProfileId = profileId
-        mutableState.value = ServersUiState(
-            connections = stored.connections,
-            // A server that has no token on this device (synced from another one) is a sign-in, not a mystery.
-            failures = stored.connections
-                .filter { stored.tokens[it.credentialRef].isNullOrBlank() }
-                .associate { it.id to ServerFailure.AUTH_REQUIRED },
-            revision = mutableState.value.revision + 1
-        )
-        if (libraryRefreshPending) scheduleLibraryRefresh(profileId)
+        synchronized(lock) {
+            libraryLoadEpoch++
+            generation++
+            val stored = readStored(profileId)
+            synchronized(lock) { tokens = stored.tokens }
+            pendingPush = stored.pendingPush
+            syncedKeys = stored.syncedKeys?.toSet()
+            libraryRefreshPending = stored.libraryRefreshPending
+            loadedProfileId = profileId
+            mutableState.value = ServersUiState(
+                connections = stored.connections,
+                loadingLibraries = if (libraryRefreshPending) stored.connections.filter {
+                    it.enabled && !stored.tokens[it.credentialRef].isNullOrBlank()
+                }.mapTo(mutableSetOf()) { it.id } else emptySet(),
+                // A server that has no token on this device (synced from another one) is a sign-in, not a mystery.
+                failures = stored.connections
+                    .filter { stored.tokens[it.credentialRef].isNullOrBlank() }
+                    .associate { it.id to ServerFailure.AUTH_REQUIRED },
+                revision = mutableState.value.revision + 1
+            )
+            if (libraryRefreshPending) scheduleLibraryRefresh(profileId)
+        }
     }
 
     /**
@@ -332,44 +364,55 @@ class ServerRepository(
      * new server). One pass per load, never a loop; a server that cannot be reached keeps "Refresh libraries".
      */
     private fun scheduleLibraryRefresh(profileId: Int) {
-        val ids = mutableState.value.connections
-            .filter { synchronized(lock) { tokens[it.credentialRef] }.orEmpty().isNotBlank() }
-            .map { it.id }
+        val epoch = libraryLoadEpoch
+        val ids = mutableState.value.loadingLibraries.toList()
         scope.launch {
             ids.forEach { id ->
+                if (epoch != libraryLoadEpoch) return@launch
                 try {
                     refreshLibraries(id)
                 } catch (error: CancellationException) {
                     if (!isActive) throw error
-                } catch (_: Exception) {
-                    // Left for the user's "Refresh libraries".
+                } catch (error: Exception) {
+                    setFailure(id, error.serverFailure(), expectedEpoch = epoch)
+                } finally {
+                    mutableState.update { state ->
+                        if (epoch == libraryLoadEpoch) state.copy(loadingLibraries = state.loadingLibraries - id) else state
+                    }
                 }
             }
-            if (loadedProfileId == profileId) {
-                libraryRefreshPending = false
-                persist(mutableState.value.connections, synchronized(lock) { tokens })
+            synchronized(lock) {
+                if (loadedProfileId == profileId && epoch == libraryLoadEpoch) {
+                    libraryRefreshPending = false
+                    persist(mutableState.value.connections, tokens)
+                }
             }
         }
     }
 
-    private fun updateConnection(connectionId: String, transform: (ServerConnection) -> ServerConnection) {
-        ensureLoaded()
-        val connections = mutableState.value.connections.map { if (it.id == connectionId) transform(it) else it }
-        save(connections, synchronized(lock) { tokens })
+    private fun updateConnection(connectionId: String, expectedEpoch: Long? = null, transform: (ServerConnection) -> ServerConnection) {
+        synchronized(lock) {
+            ensureLoaded()
+            if (expectedEpoch != null && expectedEpoch != libraryLoadEpoch) return
+            val connections = mutableState.value.connections.map { if (it.id == connectionId) transform(it) else it }
+            save(connections, synchronized(lock) { tokens })
+        }
     }
 
     private fun save(connections: List<ServerConnection>, updatedTokens: Map<String, String>, local: Boolean = true) {
-        val profileId = loadedProfileId ?: return
-        val retained = updatedTokens.filterKeys { ref -> connections.any { it.credentialRef == ref } }
-        if (local) {
-            pendingPush = true
-            localVersion++
+        synchronized(lock) {
+            val profileId = loadedProfileId ?: return
+            val retained = updatedTokens.filterKeys { ref -> connections.any { it.credentialRef == ref } }
+            if (local) {
+                pendingPush = true
+                localVersion++
+            }
+            persist(connections, retained)
+            synchronized(lock) { tokens = retained }
+            generation++
+            mutableState.update { it.copy(connections = connections, revision = it.revision + 1) }
+            if (local) mutableLocalChanges.tryEmit(profileId)
         }
-        persist(connections, retained)
-        synchronized(lock) { tokens = retained }
-        generation++
-        mutableState.update { it.copy(connections = connections, revision = it.revision + 1) }
-        if (local) mutableLocalChanges.tryEmit(profileId)
     }
 
     private fun persist(connections: List<ServerConnection>, currentTokens: Map<String, String>) {
@@ -380,8 +423,15 @@ class ServerRepository(
         }.onFailure { Log.w(TAG, "Unable to save server connections", it) }
     }
 
-    private fun setFailure(connectionId: String, failure: ServerFailure?) {
+    private fun setFailure(
+        connectionId: String,
+        failure: ServerFailure?,
+        expectedEpoch: Long? = null,
+        expectedConnection: ServerConnection? = null
+    ) {
         mutableState.update { state ->
+            if (expectedEpoch != null && expectedEpoch != libraryLoadEpoch) return@update state
+            if (expectedConnection != null && state.connections.firstOrNull { it.id == connectionId } != expectedConnection) return@update state
             if (state.failures[connectionId] == failure) return@update state
             val failures = if (failure == null) state.failures - connectionId else state.failures + (connectionId to failure)
             state.copy(failures = failures)

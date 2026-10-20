@@ -8,14 +8,13 @@ import com.nuvio.tv.core.iptv.XtreamCatchUp.ProgrammeAction
  * The locked decision, in one table: a finished replayable programme plays INSTANTLY (TiViMate's
  * behaviour, and what switchers expect), the airing programme on an archive channel opens the
  * two-button sheet — the only state with two reasonable destinations and no obvious default — and
- * an airing programme with no archive just plays live. Anything unplayable is not a target at all,
- * so the D-pad skips it and the guide never promises playback it cannot deliver.
+ * an airing programme with no archive just plays live. Unplayable programmes can still take focus for inspection; OK does not promise playback.
  */
 internal object GuideCellIntent {
 
     /** What pressing OK on the cell should do. */
     enum class Intent {
-        /** Nothing playable here — the cell is not focusable. */
+        /** Nothing playable here — focus may still reveal details. */
         NONE,
 
         /** Tune the channel live, no sheet. */
@@ -35,8 +34,8 @@ internal object GuideCellIntent {
         ProgrammeAction.REPLAY -> Intent.REPLAY
     }
 
-    /** The D-pad only stops where OK does something. */
-    fun isFocusable(action: ProgrammeAction): Boolean = forAction(action) != Intent.NONE
+    /** Whether OK can activate playback; independent of inspection focus. */
+    fun canActivate(action: ProgrammeAction): Boolean = forAction(action) != Intent.NONE
 
     /**
      * The ⟲ badge means "the panel kept this", not "this cell is selectable" — an airing programme

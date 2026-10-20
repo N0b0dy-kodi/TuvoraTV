@@ -26,8 +26,8 @@ class ServerStreams @Inject constructor(
     fun canServe(type: String, videoId: String): Boolean {
         ServerItemRef.parse(videoId)?.let { ref -> return repository.connection(ref.connectionId)?.enabled == true }
         val connections = repository.enabledConnections().ifEmpty { return false }
-        val request = matcher.request(type, videoId, season = null, episode = null) ?: return false
-        return connections.any { matcher.supports(it, request.kind) }
+        val request = matcher.request(type, videoId, season = 0, episode = 0) ?: return false
+        return connections.any { eligible(it, request.kind) }
     }
 
     fun sources(
@@ -44,13 +44,22 @@ class ServerStreams @Inject constructor(
         val connections = repository.enabledConnections().ifEmpty { return emptyList() }
         val request = matcher.request(type, videoId, season, episode) ?: return emptyList()
         return connections
-            .filter { matcher.supports(it, request.kind) }
+            .filter { eligible(it, request.kind) }
             .map { connection ->
                 source(connection, preferred = connection.useCatalogMetadata) {
-                    matcher.match(connection, request, forceRefresh).flatMap { candidates(it) }
+                    if (forceRefresh && connection.libraries.isEmpty()) repository.refreshLibraries(connection.id)
+                    repository.awaitLibraries(connection.id)
+                    val current = repository.connection(connection.id) ?: throw ServerException(ServerFailure.NOT_FOUND)
+                    matcher.match(current, request, forceRefresh).flatMap { candidates(it) }
                 }
             }
     }
+
+    private fun eligible(connection: ServerConnection, kind: ServerMediaKind): Boolean =
+        matcher.supports(connection, kind) ||
+            ((connection.id in repository.uiState.value.loadingLibraries ||
+                (connection.libraries.isEmpty() && connection.id in repository.uiState.value.failures)) &&
+                repository.provider(connection)?.supports(ServerCapability.EXTERNAL_ID_LOOKUP) == true)
 
     fun preferredSourceNames(type: String, videoId: String): Set<String> =
         sources(type, videoId, season = null, episode = null)

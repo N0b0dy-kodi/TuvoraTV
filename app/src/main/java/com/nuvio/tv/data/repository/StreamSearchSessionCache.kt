@@ -35,9 +35,10 @@ internal data class StreamSearchRequestKey(
  */
 internal class StreamSearchSessionCache(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    private val nowMs: () -> Long = System::currentTimeMillis,
+    private val nowMs: () -> Long = android.os.SystemClock::elapsedRealtime,
     private val completedTtlMs: Long = DEFAULT_COMPLETED_TTL_MS,
-    private val maxEntries: Int = DEFAULT_MAX_ENTRIES
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+    private val interruptedResult: () -> NetworkResult.Error = { NetworkResult.Error("Source search interrupted. Try again.") }
 ) {
     private data class Snapshot(
         val result: NetworkResult<List<AddonStreams>>,
@@ -139,6 +140,9 @@ internal class StreamSearchSessionCache(
                     }
                 }
             } catch (error: CancellationException) {
+                if (!session.invalidated) session.state.update { current ->
+                    Snapshot(interruptedResult(), current.version + 1, isComplete = false)
+                }
                 throw error
             } catch (error: Throwable) {
                 session.state.update { current ->
@@ -149,32 +153,25 @@ internal class StreamSearchSessionCache(
                     )
                 }
             } finally {
-                completeSession(key, session)
+                withContext(NonCancellable) { completeSession(key, session) }
             }
         }
         return session
     }
 
     private suspend fun completeSession(key: StreamSearchRequestKey, session: Session) {
-        if (session.invalidated) return
-        session.state.update { current ->
-            val lastSuccess = session.lastSuccessfulResult
-            if (lastSuccess != null && current.result !is NetworkResult.Success) {
-                Snapshot(
-                    result = lastSuccess,
-                    version = current.version + 1,
-                    isComplete = true
-                )
-            } else {
-                current.copy(isComplete = true)
-            }
-        }
         mutex.withLock {
-            if (sessions[key] !== session) return@withLock
-            if (session.lastSuccessfulResult != null) {
-                session.completedAtMs = nowMs()
-            } else {
-                sessions.remove(key)
+            if (session.invalidated) return@withLock
+            // Retire a failed/cancelled entry before observers see completion and can ask again.
+            if (sessions[key] === session) {
+                if (session.lastSuccessfulResult != null) session.completedAtMs = nowMs()
+                else sessions.remove(key)
+            }
+            session.state.update { current ->
+                val lastSuccess = session.lastSuccessfulResult
+                if (lastSuccess != null && current.result !is NetworkResult.Success) {
+                    Snapshot(lastSuccess, current.version + 1, isComplete = true)
+                } else current.copy(isComplete = true)
             }
         }
     }

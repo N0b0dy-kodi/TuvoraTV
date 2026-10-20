@@ -427,6 +427,7 @@ fun PlayerScreen(
     // spin-up. Restored on dispose so non-player screens stay at default priority.
     // Tell app-level chrome (the update banner) to stand down while the player owns the screen:
     // the banner is a layout sibling of the whole app, so leaving it up shrinks the video.
+    com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(active = true)
     DisposableEffect(Unit) {
         com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(true)
         onDispose { com.nuvio.tv.updater.ImmersivePlaybackGate.setImmersive(false) }

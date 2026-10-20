@@ -63,7 +63,7 @@ class GuideCatchUpSupportTest {
         val action =
             guideActionFor(programme(now - 3 * hour, now - 2 * hour), archiveChannel, now, catchUpSupported = false)
         assertEquals("not playable", ProgrammeAction.NONE, action)
-        assertFalse("and not a focus target", GuideCellIntent.isFocusable(action))
+        assertFalse("and has no playback action", GuideCellIntent.canActivate(action))
         assertFalse("and carries no badge", GuideCellIntent.showsReplayBadge(action))
     }
 

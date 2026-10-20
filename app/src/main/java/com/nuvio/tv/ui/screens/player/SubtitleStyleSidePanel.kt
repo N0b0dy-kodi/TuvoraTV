@@ -103,7 +103,7 @@ internal fun SubtitleStyleSidePanel(
         ) {
             Row(
                 modifier = Modifier.width(StyleGridWidth),
-                horizontalArrangement = Arrangement.Start,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -111,6 +111,21 @@ internal fun SubtitleStyleSidePanel(
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White
                 )
+                    Card(
+                        onClick = { onEvent(PlayerEvent.OnResetSubtitleDefaults) },
+                        colors = CardDefaults.colors(
+                            containerColor = Color.White.copy(alpha = 0.1f),
+                            focusedContainerColor = Color.White.copy(alpha = 0.2f)
+                        ),
+                        shape = CardDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
+                    ) {
+                        Text(
+                            text = stringResource(R.string.subtitle_style_reset),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = 4.dp)
+                        )
+                    }
             }
         }
 
@@ -263,26 +278,19 @@ internal fun SubtitleStyleSidePanel(
                     }
                 }
                 SubtitleStyleSection(
-                    title = stringResource(R.string.subtitle_style_defaults),
-                    modifier = Modifier
-                        .width(StyleCardWidth)
-                        .height(StyleCardHeight)
+                    title = stringResource(R.string.playback_subtitle_side_padding),
+                    modifier = Modifier.width(StyleCardWidth).height(StyleCardHeight)
                 ) {
-                    Card(
-                        onClick = { onEvent(PlayerEvent.OnResetSubtitleDefaults) },
-                        colors = CardDefaults.colors(
-                            containerColor = Color.White.copy(alpha = 0.1f),
-                            focusedContainerColor = Color.White.copy(alpha = 0.2f)
-                        ),
-                        shape = CardDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
-                    ) {
-                        Text(
-                            text = stringResource(R.string.subtitle_style_reset),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.8f),
-                            modifier = Modifier.padding(horizontal = NuvioTheme.spacing.lg, vertical = 10.dp)
-                        )
+                    SubtitleStyleSettingRow {
+                        SubtitleStyleStepperButton(icon = Icons.Default.Remove, onClick = {
+                            onEvent(PlayerEvent.OnSetSubtitleSideMargin((subtitleStyle.sideMarginPercent - 1).coerceAtLeast(0)))
+                        })
+                        SubtitleStyleValueDisplay(text = "${subtitleStyle.sideMarginPercent}%")
+                        SubtitleStyleStepperButton(icon = Icons.Default.Add, onClick = {
+                            onEvent(PlayerEvent.OnSetSubtitleSideMargin((subtitleStyle.sideMarginPercent + 1).coerceAtMost(com.nuvio.tv.core.picture.SubtitleSideMargin.MAX_PERCENT)))
+                        })
                     }
+
                 }
             }
         }

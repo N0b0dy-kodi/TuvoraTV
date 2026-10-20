@@ -2465,7 +2465,7 @@
     <string name="debrid_section_account">Compte</string>
     <string name="debrid_section_instant_playback">Lecture instantanée</string>
     <string name="debrid_section_filters">Filtres &amp; tri</string>
-    <string name="debrid_section_formatting">Paramètres web</string>
+    <string name="debrid_section_formatting">Mise en forme</string>
     <string name="debrid_provider_title">Fournisseur</string>
     <string name="debrid_provider_subtitle">D’autres fournisseurs seront ajoutés ultérieurement</string>
     <string name="debrid_provider_torbox">Torbox</string>

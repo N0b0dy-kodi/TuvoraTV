@@ -509,7 +509,7 @@
     <string name="experience_mode_advanced">Advanced</string>
     <string name="experience_mode_choose_title">Choose your Tuvora experience</string>
     <string name="experience_mode_choose_subtitle">Start simple or unlock every customization. You can switch anytime.</string>
-    <string name="experience_mode_essential_card_subtitle">Focused setup, add-ons, playback basics, Trakt, and account settings.</string>
+    <string name="experience_mode_essential_card_subtitle">Focused setup, content sources, playback basics, tracking, and account settings.</string>
     <string name="experience_mode_advanced_card_subtitle">Full settings, layout controls, catalog order, collections, plug-ins, and diagnostics.</string>
     <string name="experience_mode_group_title">Experience mode</string>
     <string name="essential_addon_continue_for_now">Continue for now</string>
@@ -3440,7 +3440,7 @@
     <string name="profile_make_primary_failed_subtitle">Nothing was changed. Check your connection and try again.</string>
     <string name="profile_make_primary_ok">OK</string>
     <string name="player_error_stream_provider_firewall">\n\nYour provider\'s firewall blocked this stream. Set a custom User-Agent for this playlist (for example VLC), or ask your provider to allow this device.</string>
-    <string name="home_empty_iptv_hint">No content yet. Add your IPTV playlist in Settings to get started.</string>
+    <string name="home_empty_iptv_hint">No content yet. Add an IPTV playlist or connect a media server in Settings to get started.</string>
     <string name="home_empty_playlist_present_hint">Nothing to show yet. Your playlist\'s channels, movies, and series are in the IPTV tab, and Search finds them too.</string>
     <string name="theme_color_marigold">Marigold</string>
     <string name="iptv_pairing_entry_title">Add from phone</string>
@@ -3477,11 +3477,11 @@
     <string name="iptv_settings_hub_subtitle">Add a live TV / VOD provider by URL</string>
     <string name="iptv_hub_tab_live">Live TV</string>
     <string name="iptv_hub_account_fallback">Account</string>
-    <string name="iptv_hub_choose_provider">Choose provider</string>
+    <string name="iptv_hub_choose_provider">Playlists</string>
     <string name="iptv_hub_provider_current">Current</string>
-    <string name="iptv_hub_no_provider_title">No IPTV provider yet</string>
+    <string name="iptv_hub_no_provider_title">No IPTV playlist yet</string>
     <string name="iptv_hub_no_provider_subtitle">Add your Xtream Codes portal or M3U URL to watch Live TV, Movies and Series.</string>
-    <string name="iptv_hub_add_provider">Add IPTV provider</string>
+    <string name="iptv_hub_add_provider">Add IPTV playlist</string>
     <string name="iptv_hub_empty_title">Nothing here</string>
     <string name="iptv_hub_empty_subtitle">This playlist has no content in this section.</string>
     <string name="iptv_hub_row_failed">Couldn’t load · Retry</string>
@@ -3497,7 +3497,7 @@
     <string name="iptv_guide_no_information">No information</string>
     <string name="iptv_guide_min_left">%1$d min left</string>
     <string name="iptv_guide_next_programme">Next: %1$s · %2$s</string>
-    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite · MENU hide or move · ▶ guide</string>
+    <string name="iptv_guide_hint">OK preview · OK again fullscreen · hold OK favorite · MENU hide or move · RIGHT timeline · LEFT/RIGHT time · BACK now</string>
     <string name="iptv_guide_channel_list_title">Channels</string>
     <string name="iptv_guide_paused">Paused</string>
     <string name="iptv_guide_live">Live</string>
@@ -3661,4 +3661,23 @@
     <string name="cd_iptv_setup_qr">QR code that opens the setup page on your phone</string>
     <string name="playback_net_http2">Enable HTTP/2</string>
     <string name="playback_net_http2_sub">Enable HTTP/2 protocol for network connections, allowing request multiplexing and faster handshake times.</string>
+    <string name="stream_source_query_timed_out">Source search timed out. Some sources did not finish. Try again.</string>
+    <string name="playback_build_restricted_message">This version plays from IPTV playlists and media servers. Add-on playback is not available in this version.</string>
+    <string name="stream_discovering_source">Discovering source</string>
+    <string name="stream_source_configuration_failed">Source configuration could not be loaded. Try again.</string>
+    <string name="stream_source_search_interrupted">Source search was interrupted. Try again.</string>
+    <string name="stream_no_compatible_sources">No configured source can provide playback for this title. Check your sources in Settings.</string>
+    <string name="stream_sources_failed">Some sources could not be checked. %1$s</string>
+    <string name="iptv_guide_return_now">Return to now</string>
+    <string name="iptv_guide_browsing_schedule">Browsing the schedule</string>
+    <string name="iptv_guide_empty_window">No guide data for this time</string>
+    <string name="iptv_guide_data_unavailable">No guide data provided. Check this playlist’s EPG settings.</string>
+    <string name="iptv_manage_playlists">Manage playlists</string>
+    <string name="settings_p2p_enabled_summary">Enabled · select to manage P2P streaming and storage</string>
+    <string name="settings_p2p_disabled_summary">Off · select to enable P2P streaming</string>
+    <string name="addon_link_confirm_title">Install add-on?</string>
+    <string name="addon_link_confirm_body">This link wants to add a content source. Review its address before installing:\n%1$s</string>
+    <string name="mdblist_ratings_off_hint">Account configured · ratings are off. Enable them here to show ratings.</string>
+    <string name="simkl_watch_progress_hint">Connected · choose Simkl under Watch Progress to use it for Continue Watching</string>
+    <string name="collections_source_missing_help">This folder’s source add-on is not installed. Install it in Settings → Content Discovery → Add-ons, or edit the folder to choose another source.</string>
 </resources>

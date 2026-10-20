@@ -47,15 +47,17 @@ internal class PlaybackAvailabilityViewModel @Inject constructor(
     }
 
     val availability = combine(
-        addonRepository.getInstalledAddons(),
+        addonRepository.getAddonDiscoveryState(),
         enabledScrapers,
         iptvSourceTypes,
         serverRepository.uiState
-    ) { addons, scrapers, iptvTypes, _ ->
+    ) { discovery, scrapers, iptvTypes, _ ->
         PlaybackAvailability(
-            addons,
+            discovery.addons,
             scrapers,
-            isLoaded = true,
+            isLoaded = discovery.initialized && discovery.pendingUrls.isEmpty(),
+            hasPendingAddonManifests = !discovery.initialized || discovery.pendingUrls.isNotEmpty(),
+            hasFailedAddonManifests = discovery.failedUrls.isNotEmpty(),
             cachedMeta = metaRepository::getCachedMeta,
             iptvSourceTypes = iptvTypes,
             serverStreams = serverStreams::canServe

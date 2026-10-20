@@ -865,17 +865,33 @@ open class MainActivity : ComponentActivity() {
                             installedAddons.orEmpty().isEmpty() &&
                             !mainUiPrefs.addonSetupSkipped
                     val pendingDeepLink by pendingDeepLinkUrl.collectAsState()
+                    var addonLinkToConfirm by remember { mutableStateOf<String?>(null) }
+                    addonLinkToConfirm?.let { manifestUrl ->
+                        com.nuvio.tv.ui.components.NuvioDialog(
+                            title = context.getString(R.string.addon_link_confirm_title),
+                            subtitle = context.getString(R.string.addon_link_confirm_body, manifestUrl),
+                            onDismiss = { addonLinkToConfirm = null }
+                        ) {
+                            androidx.tv.material3.Button(onClick = { addonLinkToConfirm = null }) {
+                                androidx.tv.material3.Text(context.getString(R.string.action_cancel))
+                            }
+                            androidx.tv.material3.Button(onClick = {
+                                addonLinkToConfirm = null
+                                lifecycleScope.launch {
+                                    Toast.makeText(context, context.getString(R.string.addon_installing), Toast.LENGTH_SHORT).show()
+                                    val result = deepLinkHandler.installAddon(manifestUrl)
+                                    Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+                                }
+                            }) { androidx.tv.material3.Text(context.getString(R.string.addon_install_title)) }
+                        }
+                    }
 
                     LaunchedEffect(pendingDeepLink) {
                         val url = pendingDeepLink ?: return@LaunchedEffect
                         val deepLink = DeepLinkParser.parse(url)
                         if (deepLink is AppDeepLink.AddonInstall && (needsEssentialAddonSetup || !layoutChosen)) {
-                            Toast.makeText(context, context.getString(R.string.addon_installing), Toast.LENGTH_SHORT).show()
-                            val installResult = deepLinkHandler.installAddon(deepLink.manifestUrl)
-                            if (pendingDeepLinkUrl.value == url) {
-                                pendingDeepLinkUrl.value = null
-                            }
-                            Toast.makeText(context, installResult.message, Toast.LENGTH_LONG).show()
+                            addonLinkToConfirm = deepLink.manifestUrl
+                            if (pendingDeepLinkUrl.value == url) pendingDeepLinkUrl.value = null
                         }
                     }
 
@@ -1046,12 +1062,8 @@ open class MainActivity : ComponentActivity() {
                                 navController.navigate(Screen.AddonManager.route) {
                                     launchSingleTop = true
                                 }
-                                Toast.makeText(context, context.getString(R.string.addon_installing), Toast.LENGTH_SHORT).show()
-                                val installResult = deepLinkHandler.installAddon(deepLink.manifestUrl)
-                                if (pendingDeepLinkUrl.value == url) {
-                                    pendingDeepLinkUrl.value = null
-                                }
-                                Toast.makeText(context, installResult.message, Toast.LENGTH_LONG).show()
+                                addonLinkToConfirm = deepLink.manifestUrl
+                                if (pendingDeepLinkUrl.value == url) pendingDeepLinkUrl.value = null
                             }
                             null -> {
                                 pendingDeepLinkUrl.value = null

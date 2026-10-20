@@ -124,6 +124,7 @@ object ManagedDetailsModel {
             if (needsReimport) {
                 add(DetailsAction.REIMPORT)
             } else {
+                if (ManagedPlaylistPolicy.showEditServerLogin(managed != null)) add(DetailsAction.EDIT)
                 add(DetailsAction.CONTENT)
                 add(DetailsAction.HIDDEN)
                 // Lane G (B10/F10/F14): every playlist type has a guide and channel names.
@@ -132,8 +133,6 @@ object ManagedDetailsModel {
                     add(DetailsAction.REMATCH)
                     add(DetailsAction.CATCHUP)
                 }
-                // A managed playlist's server and login are the provider's: the lock note replaces Edit.
-                if (ManagedPlaylistPolicy.showEditServerLogin(managed != null)) add(DetailsAction.EDIT)
             }
             add(DetailsAction.TOGGLE_ENABLED)
         }

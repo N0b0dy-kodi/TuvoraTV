@@ -89,7 +89,8 @@ class PlaybackSettingsOrganizationTest {
 
         assertRowCount(R.string.playback_skip_intro, PlaybackSection.SKIP_SEGMENTS, 1)
         assertRowCount(R.string.auto_skip_recap, PlaybackSection.SKIP_SEGMENTS, 1)
-        assertRowCount(R.string.auto_skip_movie_credits, PlaybackSection.SKIP_SEGMENTS, 1)
+        // This fork has no MOVIE_CREDITS segment engine; do not advertise an inert setting.
+        assertRowCount(R.string.auto_skip_movie_credits, PlaybackSection.SKIP_SEGMENTS, 0)
         assertRowCount(R.string.playback_skip_intro, PlaybackSection.PLAYER_INTERFACE, 0)
     }
 

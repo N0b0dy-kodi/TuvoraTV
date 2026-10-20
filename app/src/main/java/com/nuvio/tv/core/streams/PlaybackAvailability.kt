@@ -29,14 +29,17 @@ internal data class PlaybackAvailability(
      * the Xtream source lane — a source like a scraper, so an IPTV-only user can still play catalog titles.
      */
     val iptvSourceTypes: Set<String> = emptySet(),
-    private val serverStreams: (String, String) -> Boolean = { _, _ -> false }
+    private val serverStreams: (String, String) -> Boolean = { _, _ -> false },
+    val hasPendingAddonManifests: Boolean = false,
+    val hasFailedAddonManifests: Boolean = false
 ) {
     fun canStream(
         type: String,
         videoId: String,
         contentId: String = videoId,
         video: Video? = null
-    ): Boolean = isIptvId(videoId) || isIptvId(contentId) ||
+    ): Boolean = ((hasPendingAddonManifests || hasFailedAddonManifests) && com.nuvio.tv.core.build.AppFeaturePolicy.addonStreamSourcesEnabled) ||
+        isIptvId(videoId) || isIptvId(contentId) ||
         type in iptvSourceTypes ||
         video?.takeIf { it.id == videoId }?.streams?.isNotEmpty() == true ||
         cachedMeta(type, contentId)?.videos?.any { it.id == videoId && it.streams.isNotEmpty() } == true ||

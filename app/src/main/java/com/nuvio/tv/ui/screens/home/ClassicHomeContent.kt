@@ -128,17 +128,18 @@ fun ClassicHomeContent(
     val classicLandscapeCatalogWidth = classicCatalogPosterCardStyle.height
     val classicLandscapeCatalogHeight = classicLandscapeCatalogWidth / (16f / 9f)
     val globalLandscape = LocalLandscapePosterMode.current
-    val classicContinueWatchingCardWidth = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle, globalLandscape) {
+    val wideCardLimit = ((androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp - 120.dp) / 2).coerceAtLeast(180.dp)
+    val classicContinueWatchingCardWidth = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle, globalLandscape, wideCardLimit) {
         when (uiState.continueWatchingCardStyle) {
             ContinueWatchingCardStyle.POSTER -> if (globalLandscape) classicLandscapeCatalogWidth else classicCatalogPosterCardStyle.width
-            ContinueWatchingCardStyle.WIDE -> if (globalLandscape) classicLandscapeCatalogWidth else classicSecondaryPosterCardStyle.width * 2.5f
+            ContinueWatchingCardStyle.WIDE -> (if (globalLandscape) classicLandscapeCatalogWidth else classicSecondaryPosterCardStyle.width * 2.5f).coerceAtMost(wideCardLimit)
             ContinueWatchingCardStyle.CARD -> if (globalLandscape) classicLandscapeCatalogWidth else classicSecondaryPosterCardStyle.width * (16f / 9f)
         }
     }
-    val classicContinueWatchingImageHeight = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle, globalLandscape) {
+    val classicContinueWatchingImageHeight = remember(classicCatalogPosterCardStyle, classicSecondaryPosterCardStyle, uiState.continueWatchingCardStyle, globalLandscape, classicContinueWatchingCardWidth) {
         when (uiState.continueWatchingCardStyle) {
             ContinueWatchingCardStyle.POSTER -> if (globalLandscape) classicLandscapeCatalogHeight else classicCatalogPosterCardStyle.height
-            ContinueWatchingCardStyle.WIDE -> if (globalLandscape) classicLandscapeCatalogHeight else classicSecondaryPosterCardStyle.width * 2.5f * 0.4f
+            ContinueWatchingCardStyle.WIDE -> if (globalLandscape) classicContinueWatchingCardWidth / (16f / 9f) else classicContinueWatchingCardWidth * 0.4f
             ContinueWatchingCardStyle.CARD -> if (globalLandscape) classicLandscapeCatalogHeight else classicSecondaryPosterCardStyle.width
         }
     }

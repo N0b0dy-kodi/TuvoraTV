@@ -444,7 +444,7 @@ fun ContentCard(
                         contentScale = ContentScale.Crop
                     )
                 } else {
-                    MonochromePosterPlaceholder()
+                    MonochromePosterPlaceholder(showPlayIcon = isPlaceholderItem || isBackdropExpanded)
                 }
 
                 // Read after the image composes, so an onError write lands as a forward

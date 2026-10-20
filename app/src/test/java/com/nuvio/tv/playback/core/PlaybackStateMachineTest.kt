@@ -548,6 +548,35 @@ class PlaybackStateMachineTest {
     }
 
     @Test
+    fun `empty teardown track list cannot reuse old audio to cancel live reconnect`() {
+        var playing = playingState(ContentType.LIVE)
+        playing = PlaybackStateMachine.reduce(playing,
+            PlaybackEvent.TracksAvailable(1, hasVideo = true, audioTrackCount = 1, subtitleTrackCount = 0)).state
+        playing = PlaybackStateMachine.reduce(playing, PlaybackEvent.FirstAudio(1)).state
+        assertTrue(playing.snapshot.progress.renderedAudio)
+        val ended = PlaybackStateMachine.reduce(playing, PlaybackEvent.PlaybackEnded(1, PlaybackEndReason.EOF)).state
+
+        // mpv clears track-list after EOF while the release/reconnect coroutine is running.
+        val cleared = PlaybackStateMachine.reduce(ended,
+            PlaybackEvent.TracksAvailable(1, hasVideo = false, audioTrackCount = 0, subtitleTrackCount = 0))
+
+        assertEquals(PlaybackState.LIVE_RECONNECTING, cleared.state.snapshot.state)
+        assertTrue(cleared.state.snapshot.isReconnecting)
+        assertFalse(cleared.state.snapshot.isPlaying)
+        assertTrue(cleared.actions.isEmpty())
+    }
+
+    @Test
+    fun `first audio with empty track discovery cannot claim audio only playback`() {
+        val starting = startingState(ContentType.LIVE, SessionProfile.FULLSCREEN)
+        val empty = PlaybackStateMachine.reduce(starting,
+            PlaybackEvent.TracksAvailable(1, hasVideo = false, audioTrackCount = 0, subtitleTrackCount = 0)).state
+        val audio = PlaybackStateMachine.reduce(empty, PlaybackEvent.FirstAudio(1)).state
+        assertEquals(PlaybackState.STARTING_PRIMARY, audio.snapshot.state)
+        assertFalse(audio.snapshot.isPlaying)
+    }
+
+    @Test
     fun `live EOF still reconnects when a prior in-place recovery already consumed recoveryIssued`() {
         // Field bug (Amlogic onn box, reported black-out during live TV): an ongoing decoder
         // silent-discard opens an incident and consumes its one-shot recoveryIssued while playback

@@ -5,9 +5,9 @@ import org.junit.Test
 
 class NoAddonsHintPolicyTest {
     @Test
-    fun `full builds point at add-ons`() {
+    fun `full builds with a playlist do not ask for addons`() {
         assertEquals(NoAddonsHint.INSTALL_ADDONS, NoAddonsHintPolicy.hint(addonsEnabled = true, hasAnyIptvPlaylist = false))
-        assertEquals(NoAddonsHint.INSTALL_ADDONS, NoAddonsHintPolicy.hint(addonsEnabled = true, hasAnyIptvPlaylist = true))
+        assertEquals(NoAddonsHint.PLAYLIST_PRESENT, NoAddonsHintPolicy.hint(addonsEnabled = true, hasAnyIptvPlaylist = true))
     }
 
     @Test

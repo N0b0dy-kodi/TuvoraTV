@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.ambient
 
 import android.os.SystemClock
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -29,11 +30,12 @@ fun AmbientModeHost(
     onShown: () -> Unit,
     viewModel: AmbientModeViewModel = hiltViewModel()
 ) {
+    val playbackBlocked by controller.playbackBlocked.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val isShowing by controller.isShowing.collectAsStateWithLifecycle()
     val slides by viewModel.slides.collectAsStateWithLifecycle()
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
-    val active = settings.enabled && allowed && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    val active = settings.enabled && allowed && !playbackBlocked && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     val timeoutMs = settings.timeoutMinutes * 60_000L
 
     LaunchedEffect(active, timeoutMs) {
@@ -54,6 +56,8 @@ fun AmbientModeHost(
         }
     }
 
+    AmbientDismissBackHandler(controller, visible = isShowing && active)
+
     if (isShowing) {
         val view = LocalView.current
         DisposableEffect(view) {
@@ -63,7 +67,7 @@ fun AmbientModeHost(
     }
 
     AnimatedVisibility(
-        visible = isShowing,
+        visible = isShowing && active,
         enter = fadeIn(tween(900)),
         exit = fadeOut(tween(400))
     ) {
@@ -74,4 +78,10 @@ fun AmbientModeHost(
                 .pointerInput(Unit) { detectTapGestures { controller.dismiss() } }
         )
     }
+}
+
+/** Predictive/system Back may bypass Activity.dispatchKeyEvent; consume it at the overlay. */
+@Composable
+internal fun AmbientDismissBackHandler(controller: AmbientIdleController, visible: Boolean) {
+    BackHandler(enabled = visible) { controller.dismiss() }
 }

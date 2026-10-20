@@ -86,7 +86,9 @@ fun MDBListSettingsContent(
                 item(key = "mdblist_enabled") {
                     SettingsToggleRow(
                         title = stringResource(R.string.mdblist_enable_title),
-                        subtitle = stringResource(R.string.mdblist_enable_subtitle),
+                        subtitle = if (!uiState.enabled && (uiState.apiKey.isNotBlank() || uiState.isConnected)) {
+                            stringResource(R.string.mdblist_ratings_off_hint)
+                        } else stringResource(R.string.mdblist_enable_subtitle),
                         checked = uiState.enabled,
                         onToggle = { viewModel.onEvent(MDBListSettingsEvent.ToggleEnabled(!uiState.enabled)) },
                         modifier = Modifier

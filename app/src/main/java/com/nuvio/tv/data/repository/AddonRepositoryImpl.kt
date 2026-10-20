@@ -15,6 +15,7 @@ import com.nuvio.tv.data.mapper.toDomain
 import com.nuvio.tv.data.remote.api.AddonApi
 import com.nuvio.tv.domain.model.Addon
 import com.nuvio.tv.domain.repository.AddonRepository
+import com.nuvio.tv.domain.repository.AddonDiscoveryState
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -152,6 +156,10 @@ class AddonRepositoryImpl(
     private var manifestRetryJob: Job? = null
     private val manifestRetryLock = Any()
 
+    private val manifestRequestLock = kotlinx.coroutines.sync.Mutex()
+    private val manifestRequests = mutableMapOf<String, kotlinx.coroutines.Deferred<NetworkResult<Addon>>>()
+
+
     init {
         syncScope.launch { loadManifestCacheFromDisk() }
     }
@@ -248,7 +256,7 @@ class AddonRepositoryImpl(
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val installedAddonsFlow: kotlinx.coroutines.flow.StateFlow<List<Addon>> =
+    private val addonDiscoveryFlow: kotlinx.coroutines.flow.StateFlow<AddonDiscoveryState> =
         combine(
             preferences.installedAddonUrls,
             preferences.userSetNames,
@@ -258,7 +266,7 @@ class AddonRepositoryImpl(
         .flatMapLatest { (urls, userNames, enabledStates) ->
             flow {
                 if (urls.isEmpty()) {
-                    emit(emptyList())
+                    emit(AddonDiscoveryState(initialized = true))
                     return@flow
                 }
 
@@ -270,9 +278,14 @@ class AddonRepositoryImpl(
                         ?.copy(enabled = enabled)
                         ?: if (!enabled) placeholderAddon(canonical, userNames, enabled) else null
                 }
-                if (cached.isNotEmpty()) {
-                    emit(applyDisplayNames(cached, userNames, enabledByUrl))
+                val pending = urls.map(::canonicalizeUrl).filterTo(linkedSetOf()) {
+                    (enabledByUrl[it] ?: true) && getCachedManifest(it) == null
                 }
+                emit(AddonDiscoveryState(
+                    addons = applyDisplayNames(cached, userNames, enabledByUrl),
+                    pendingUrls = pending,
+                    initialized = true
+                ))
 
                 val hasCacheMiss = urls.any { url ->
                     val canonical = canonicalizeUrl(url)
@@ -306,7 +319,11 @@ class AddonRepositoryImpl(
                     }
 
                     if (fresh != cached) {
-                        emit(applyDisplayNames(fresh, userNames, enabledByUrl))
+                        emit(AddonDiscoveryState(
+                            addons = applyDisplayNames(fresh, userNames, enabledByUrl),
+                            failedUrls = pending.filterTo(linkedSetOf()) { getCachedManifest(it) == null },
+                            initialized = true
+                        ))
                     }
                     // Still a miss after fetching means a fetch failed: retry just those, on the ladder.
                     val stillMissing = urls.any { url ->
@@ -321,23 +338,40 @@ class AddonRepositoryImpl(
                 }
             }.flowOn(dispatcher)
         }
-        .stateIn(syncScope, SharingStarted.Eagerly, emptyList<Addon>())
+        .stateIn(syncScope, SharingStarted.Eagerly, AddonDiscoveryState())
 
-    override fun getInstalledAddons(): Flow<List<Addon>> = installedAddonsFlow
+    override fun getAddonDiscoveryState(): Flow<AddonDiscoveryState> = addonDiscoveryFlow
+    override fun getInstalledAddons(): Flow<List<Addon>> = addonDiscoveryFlow.map { it.addons }.distinctUntilChanged()
+
 
     override suspend fun fetchAddon(baseUrl: String): NetworkResult<Addon> {
         val cleanBaseUrl = canonicalizeUrl(baseUrl)
-        val queryStart = cleanBaseUrl.indexOf('?')
-        val basePath = if (queryStart >= 0) cleanBaseUrl.substring(0, queryStart).trimEnd('/') else cleanBaseUrl
-        val baseQuery = if (queryStart >= 0) cleanBaseUrl.substring(queryStart) else ""
-        val manifestUrl = "$basePath/manifest.json$baseQuery"
-
-        inFlightManifestUrls.update { it + cleanBaseUrl }
-        try {
-            return recordManifestOutcome(cleanBaseUrl, fetchManifest(cleanBaseUrl, manifestUrl))
-        } finally {
-            inFlightManifestUrls.update { it - cleanBaseUrl }
+        val request = manifestRequestLock.withLock {
+            manifestRequests[cleanBaseUrl]?.let { return@withLock it }
+            lateinit var work: kotlinx.coroutines.Deferred<NetworkResult<Addon>>
+            work = syncScope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                val queryStart = cleanBaseUrl.indexOf('?')
+                val basePath = if (queryStart >= 0) cleanBaseUrl.substring(0, queryStart).trimEnd('/') else cleanBaseUrl
+                val baseQuery = if (queryStart >= 0) cleanBaseUrl.substring(queryStart) else ""
+                val manifestUrl = "$basePath/manifest.json$baseQuery"
+                inFlightManifestUrls.update { it + cleanBaseUrl }
+                try {
+                    recordManifestOutcome(cleanBaseUrl, fetchManifest(cleanBaseUrl, manifestUrl))
+                } finally {
+                    inFlightManifestUrls.update { it - cleanBaseUrl }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        manifestRequestLock.withLock {
+                            if (manifestRequests[cleanBaseUrl] === work) manifestRequests.remove(cleanBaseUrl)
+                        }
+                    }
+                }
+            }
+            manifestRequests[cleanBaseUrl] = work
+            work
         }
+        request.start()
+        // The catalog repository owns this shared work: cancelling one source picker only detaches it.
+        return request.await()
     }
 
     private fun recordManifestOutcome(cleanBaseUrl: String, result: NetworkResult<Addon>): NetworkResult<Addon> {

@@ -117,6 +117,13 @@ class PlaybackAvailabilityTest {
         assertFalse(available.canStream("other", video.id, "uncached-parent"))
     }
 
+    @Test
+    fun `pending configuration can open discovery without being labelled unavailable`() {
+        assertTrue(PlaybackAvailability(hasPendingAddonManifests = true).canStream("movie", "tt1"))
+        assertTrue(PlaybackAvailability(isLoaded = true, hasFailedAddonManifests = true).canStream("movie", "tt1"))
+        assertFalse(PlaybackAvailability(isLoaded = true).canStream("movie", "tt1"))
+    }
+
     private fun addon() = Addon(
         id = "addon", name = "Addon", version = "1", description = null, logo = null,
         baseUrl = "https://example.com", catalogs = emptyList(), types = emptyList(),

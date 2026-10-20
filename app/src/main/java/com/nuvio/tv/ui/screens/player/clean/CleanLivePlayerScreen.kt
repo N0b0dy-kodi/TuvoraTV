@@ -137,6 +137,7 @@ internal fun CleanLivePlayerScreen(
         runCatching { if (controlsVisible) primaryFocus.requestFocus() else rootFocus.requestFocus() }
     }
 
+    com.nuvio.tv.ui.screens.ambient.AmbientPlaybackEffect(active = true)
     DisposableEffect(Unit) {
         ImmersivePlaybackGate.setImmersive(true)
         onDispose { ImmersivePlaybackGate.setImmersive(false) }

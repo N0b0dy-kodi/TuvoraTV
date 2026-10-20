@@ -396,7 +396,7 @@ fun AddonManagerScreen(
                                         containerColor = NuvioTheme.colors.BackgroundCard,
                                         contentColor = NuvioTheme.colors.TextPrimary,
                                         focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                                        focusedContentColor = NuvioTheme.colors.Primary
+                                        focusedContentColor = NuvioTheme.colors.FocusContent
                                     ),
                                     shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
                                 ) {
@@ -1449,7 +1449,7 @@ private fun AddonCardContent(
                                 containerColor = NuvioTheme.colors.BackgroundCard,
                                 contentColor = NuvioTheme.colors.TextSecondary,
                                 focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                                focusedContentColor = NuvioTheme.colors.Primary
+                                focusedContentColor = NuvioTheme.colors.FocusContent
                             ),
                             shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
                         ) {
@@ -1463,7 +1463,7 @@ private fun AddonCardContent(
                                 containerColor = NuvioTheme.colors.BackgroundCard,
                                 contentColor = NuvioTheme.colors.TextSecondary,
                                 focusedContainerColor = NuvioTheme.colors.FocusBackground,
-                                focusedContentColor = NuvioTheme.colors.Primary
+                                focusedContentColor = NuvioTheme.colors.FocusContent
                             ),
                             shape = ButtonDefaults.shape(RoundedCornerShape(NuvioTheme.radii.md))
                         ) {
