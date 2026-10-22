@@ -5,13 +5,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.lifecycle.HasDefaultViewModelProviderFactory
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 
@@ -49,6 +53,28 @@ class NavSessionViewModelStoreHolder : ViewModel() {
 }
 
 /**
+ * The session's store, with the parent's (the activity's) default factory and creation extras.
+ *
+ * A bare ViewModelStoreOwner is not enough: hiltViewModel() and viewModel() take their factory from
+ * the owner's HasDefaultViewModelProviderFactory, and without one fall back to the reflection factory,
+ * which cannot build an @HiltViewModel ("Cannot create an instance of class ...").
+ */
+class NavSessionViewModelStoreOwner(
+    parent: ViewModelStoreOwner,
+    private val holder: NavSessionViewModelStoreHolder,
+) : ViewModelStoreOwner, HasDefaultViewModelProviderFactory {
+    private val parentDefaults: HasDefaultViewModelProviderFactory = requireNotNull(parent as? HasDefaultViewModelProviderFactory) {
+        "The parent ViewModelStoreOwner must provide a default ViewModelProvider.Factory (Hilt needs it)"
+    }
+
+    override val viewModelStore: ViewModelStore get() = holder.viewModelStore
+    override val defaultViewModelProviderFactory: ViewModelProvider.Factory
+        get() = parentDefaults.defaultViewModelProviderFactory
+    override val defaultViewModelCreationExtras: CreationExtras
+        get() = parentDefaults.defaultViewModelCreationExtras
+}
+
+/**
  * Remembers the store owner for [navController], created in the same composition. When that
  * composition goes away, unless the activity is only being recreated, the session ends: the
  * controller's back stack is destroyed and the store is cleared.
@@ -69,12 +95,8 @@ fun rememberNavSessionViewModelStoreOwner(navController: NavHostController): Vie
             }
         }
     }
-    return remember(holder) {
-        object : ViewModelStoreOwner {
-            override val viewModelStore: ViewModelStore
-                get() = holder.viewModelStore
-        }
-    }
+    val parent = checkNotNull(LocalViewModelStoreOwner.current) { "No ViewModelStoreOwner provided" }
+    return remember(holder, parent) { NavSessionViewModelStoreOwner(parent, holder) }
 }
 
 /**
