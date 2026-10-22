@@ -64,7 +64,8 @@ fun UpdateBannerHost(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val update = state.update
+    // A newer release takes the banner; otherwise it can report the release that was just installed automatically.
+    val update = state.update ?: state.installedUpdate
     // The banner is a Column sibling of the whole app (below), so it SHRINKS the content rather
     // than floating over it — over the player that letterboxes the picture. Ask the policy.
     val playerOnScreen by ImmersivePlaybackGate.isActive.collectAsState()
@@ -90,6 +91,8 @@ fun UpdateBannerHost(
                 UpdateBanner(
                     state = state,
                     update = it,
+                    isInstalledUpdate = state.update == null,
+                    autoDismissPaused = showReleaseNotes,
                     onDownload = onDownload,
                     onInstall = onInstall,
                     onShowReleaseNotes = { showReleaseNotes = true },

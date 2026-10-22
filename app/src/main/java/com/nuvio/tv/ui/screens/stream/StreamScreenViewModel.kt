@@ -203,6 +203,7 @@ class StreamScreenViewModel @Inject constructor(
         )
     )
     val uiState: StateFlow<StreamScreenUiState> = _uiState.asStateFlow()
+
     val streamBadgeSettings = streamBadgeSettingsDataStore.settings
 
     val playerPreference = playerSettingsDataStore.playerSettings
@@ -514,7 +515,8 @@ class StreamScreenViewModel @Inject constructor(
                                 videoSize = cached.videoSize,
                                 fileIdx = cached.fileIdx,
                                 sources = cached.sources,
-                                contentLanguage = cached.contentLanguage ?: contentLanguage
+                                contentLanguage = cached.contentLanguage ?: contentLanguage,
+                                audioDelayMs = cached.audioDelayMs
                             ),
                             showDirectAutoPlayOverlay = showOverlay || it.showDirectAutoPlayOverlay,
                             isDirectAutoPlayFlow = showOverlay || it.isDirectAutoPlayFlow
@@ -1575,7 +1577,8 @@ class StreamScreenViewModel @Inject constructor(
             streamDescription = stream.description,
             fileIdx = stream.getEffectiveFileIdx(),
             sources = stream.sources,
-            contentLanguage = contentLanguage
+            contentLanguage = contentLanguage,
+            audioDelayMs = stream.behaviorHints?.audioDelayMs
         )
 
         val url = playbackInfo.url
@@ -1593,7 +1596,8 @@ class StreamScreenViewModel @Inject constructor(
                     contentLanguage = contentLanguage,
                     year = year,
                     deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
-                    deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
+                    deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
+                    audioDelayMs = playbackInfo.audioDelayMs
                 )
             }
         }
@@ -2101,6 +2105,7 @@ data class StreamPlaybackInfo(
     val fileIdx: Int? = null,
     val sources: List<String>? = null,
     val contentLanguage: String? = null,
+    val audioDelayMs: Int? = null,
     val isServerStream: Boolean = false
 )
 

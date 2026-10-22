@@ -684,6 +684,7 @@ class PartyRepository @Inject constructor(
             displayName = partyDisplayName(profile?.name),
             avatarUrl = profile?.let { avatarRepository.shareableImageUrl(it) }?.takeIf { it.startsWith("https://") && it.length <= 512 },
             avatarColor = profile?.avatarColorHex?.takeIf { COLOR_PATTERN.matches(it) },
+            profileIndex = profile?.id,
         )
     }
 

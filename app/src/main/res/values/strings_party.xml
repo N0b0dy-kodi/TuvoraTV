@@ -74,5 +74,6 @@
     <string name="party_invite_scan">Scan with a phone to join</string>
     <string name="party_invite_share">Or share the code. Friends can enter it in Watch party on any Tuvora app.</string>
     <string name="party_invite_qr">Watch party invite QR code</string>
+    <string name="party_phone_chat_note">Open Watch party on your phone with this profile to chat.</string>
     <string name="party_server_not_connected">This title is on a media server you\'re not connected to.</string>
 </resources>

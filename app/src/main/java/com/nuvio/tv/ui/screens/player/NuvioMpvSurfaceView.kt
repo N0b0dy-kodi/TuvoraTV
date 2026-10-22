@@ -518,6 +518,18 @@ ctl {
             mode.toMpvHwdecValue()
         }
 
+    /** libmpv applies `audio-delay` natively (full range, no read-ahead); a write, so it rides the ctl queue. */
+    override fun setAudioDelayMs(delayMs: Int) {
+        if (!initialized) return
+        ctl {
+            runCatching {
+                mpv.setPropertyDouble("audio-delay", delayMs / 1000.0)
+            }.onFailure {
+                Log.w(TAG, "Failed to set audio delay on mpv (delayMs=$delayMs): ${it.message}")
+            }
+        }
+    }
+
     override fun setSubtitleDelayMs(delayMs: Int) {
         if (!initialized) return
         ctl {

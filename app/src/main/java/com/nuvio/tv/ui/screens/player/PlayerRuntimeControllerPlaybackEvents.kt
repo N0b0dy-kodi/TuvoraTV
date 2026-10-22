@@ -32,8 +32,8 @@ internal const val AUDIO_AMPLIFICATION_MIN_DB = 0
 internal const val AUDIO_AMPLIFICATION_MAX_DB = 10
 internal const val CENTER_MIX_LEVEL_MIN_DB = -10
 internal const val CENTER_MIX_LEVEL_MAX_DB = 30
-internal const val AUDIO_DELAY_MIN_MS = -60000
-internal const val AUDIO_DELAY_MAX_MS = 60000
+internal const val AUDIO_DELAY_MIN_MS = com.nuvio.tv.domain.model.AUDIO_DELAY_MIN_MS
+internal const val AUDIO_DELAY_MAX_MS = com.nuvio.tv.domain.model.AUDIO_DELAY_MAX_MS
 internal const val AUDIO_DELAY_STEP_MS = 25
 internal const val AUDIO_DELAY_HOLD_STEP_MS = 50
 internal const val AUDIO_DELAY_HOLD_FAST_STEP_MS = 100
@@ -41,19 +41,70 @@ internal const val AUDIO_DELAY_HOLD_THRESHOLD_MS = 1000L
 internal const val AUDIO_DELAY_HOLD_FAST_THRESHOLD_MS = 2000L
 internal const val AUDIO_DELAY_HOLD_REPEAT_INTERVAL_MS = 100L
 
-internal fun PlayerRuntimeController.applyAudioDelay(
-    delayMs: Int,
-    persistForCurrentRoute: Boolean = true
+/**
+ * Audio delay split into its sources, so the stream hint and the user's tweak on that stream
+ * never end up in the per-device delay. The player always gets [totalMs].
+ */
+internal data class AudioDelayParts(
+    /** Per-device delay (stored per route when "remember per device" is on). */
+    val deviceMs: Int = 0,
+    /** `behaviorHints.audioDelayMs` of the current stream. */
+    val streamMs: Int = 0,
+    /** User adjustment made while a stream delay is active; never persisted, dropped on stream change. */
+    val sessionAdjustMs: Int = 0
 ) {
-    // Engine-aware: a large delay on ExoPlayer can never be buffered and hangs playback
-    // (AudioDelayRangePolicy). A stored per-device value re-applied here (persistForCurrentRoute =
-    // false) is only capped for this session; the saved value is left alone for libmpv.
-    val clampedDelayMs = AudioDelayRangePolicy.effectiveDelayMs(delayMs, usingMpv = isUsingMpvEngine())
-    audioDelayUs.set(clampedDelayMs.toLong() * 1000L)
-    _uiState.update { it.copy(audioDelayMs = clampedDelayMs) }
-    if (persistForCurrentRoute) {
-        persistAudioDelayForCurrentRoute(clampedDelayMs)
+    val totalMs: Int
+        get() = (deviceMs.toLong() + streamMs + sessionAdjustMs)
+            .coerceIn(AUDIO_DELAY_MIN_MS.toLong(), AUDIO_DELAY_MAX_MS.toLong())
+            .toInt()
+
+    /** Value to save for the current route, or null while a stream delay is active. */
+    val persistableDeviceMs: Int?
+        get() = deviceMs.takeIf { streamMs == 0 }
+
+    /** The user picked [totalMs] in the Audio panel. */
+    fun withManualTotal(totalMs: Int): AudioDelayParts {
+        val clampedTotalMs = totalMs.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS)
+        return if (streamMs == 0) {
+            copy(deviceMs = clampedTotalMs, sessionAdjustMs = 0)
+        } else {
+            copy(sessionAdjustMs = clampedTotalMs - deviceMs - streamMs)
+        }
     }
+
+    fun withStream(streamMs: Int): AudioDelayParts =
+        copy(streamMs = streamMs.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS), sessionAdjustMs = 0)
+
+    fun withDevice(deviceMs: Int): AudioDelayParts =
+        copy(deviceMs = deviceMs.coerceIn(AUDIO_DELAY_MIN_MS, AUDIO_DELAY_MAX_MS))
+}
+
+/** Audio panel change: [delayMs] is the new total delay shown to the user. */
+internal fun PlayerRuntimeController.applyAudioDelay(delayMs: Int) {
+    // Engine-aware: a large delay on ExoPlayer can never be buffered and hangs playback
+    // (AudioDelayRangePolicy). The capped value is what the user's pick means on this engine.
+    audioDelayParts = audioDelayParts.withManualTotal(
+        AudioDelayRangePolicy.effectiveDelayMs(delayMs, usingMpv = isUsingMpvEngine())
+    )
+    applyEffectiveAudioDelay()
+    audioDelayParts.persistableDeviceMs?.let { persistAudioDelayForCurrentRoute(it) }
+}
+
+/** Pushes the current total delay to the UI state and the active engine. */
+internal fun PlayerRuntimeController.applyEffectiveAudioDelay() {
+    // A stored per-device value or stream hint is only capped for this session; the saved value is left alone for libmpv.
+    val totalMs = AudioDelayRangePolicy.effectiveDelayMs(audioDelayParts.totalMs, usingMpv = isUsingMpvEngine())
+    audioDelayUs.set(totalMs.toLong() * 1000L)
+    _uiState.update { it.copy(audioDelayMs = totalMs) }
+    if (isUsingMpvEngine()) {
+        mpvView?.setAudioDelayMs(totalMs)
+    }
+}
+
+/** A new stream was selected: swap in its delay hint and drop the tweak made on the previous one. */
+internal fun PlayerRuntimeController.applyStreamAudioDelay(streamDelayMs: Int?) {
+    audioDelayParts = audioDelayParts.withStream(streamDelayMs ?: 0)
+    applyEffectiveAudioDelay()
 }
 
 internal fun PlayerRuntimeController.skipActiveInterval(): Boolean {

@@ -244,10 +244,12 @@ class ProfileSettingsSyncService @Inject constructor(
         }
     }
 
-    suspend fun pushCurrentProfileToRemote(): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun pushCurrentProfileToRemote(): Result<Unit> =
+        pushProfileSettingsToRemote(profileManager.activeProfileId.value)
+
+    private suspend fun pushProfileSettingsToRemote(profileId: Int): Result<Unit> = withContext(Dispatchers.IO) {
         syncMutex.withLock {
             try {
-                val profileId = profileManager.activeProfileId.value
                 // B03 (D4): merge with the server's blob field by field before pushing, so a website edit
                 // to a key this TV did not touch survives (a stale whole-blob push used to revert it).
                 var blob = exportSettingsBlob(profileId)
@@ -618,13 +620,16 @@ class ProfileSettingsSyncService @Inject constructor(
                             }
                     }
                     combine(featureFlows) { signatures ->
-                        signatures.joinToString(separator = "||")
+                        profileId to signatures.joinToString(separator = "||")
                     }
+                        .distinctUntilChanged()
+                        // The first value is the profile's stored state, not a local edit. On a
+                        // profile switch it can be older than the cloud copy that is about to be
+                        // pulled, so pushing it would overwrite newer settings.
+                        .drop(1)
                 }
-                .distinctUntilChanged()
-                .drop(1)
                 .debounce(SETTINGS_PUSH_DEBOUNCE_MS)
-                .collect { signature ->
+                .collect { (profileId, signature) ->
                     if (!authManager.canSync) return@collect
                     if (applyingRemoteBlob) return@collect
                     if (profileDataStoreFactory.corruptedFileNames.isNotEmpty()) {
@@ -637,7 +642,8 @@ class ProfileSettingsSyncService @Inject constructor(
                         skipNextPushSignature = null
                         return@collect
                     }
-                    pushCurrentProfileToRemote()
+                    // A change debounced across a profile switch still belongs to the profile it was made on.
+                    pushProfileSettingsToRemote(profileId)
                 }
         }
     }

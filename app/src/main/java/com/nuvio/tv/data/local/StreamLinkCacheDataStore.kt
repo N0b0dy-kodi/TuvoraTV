@@ -27,6 +27,7 @@ data class CachedStreamLink(
     val year: String? = null,
     val deviceSourceKind: String? = null,
     val deviceSourceId: String? = null,
+    val audioDelayMs: Int? = null
 ) {
     // Legacy entries have no provenance: discover again once instead of bypassing a device choice.
     val availableOnDevice: Boolean get() = when (val kind = deviceSourceKind) {
@@ -64,6 +65,7 @@ class StreamLinkCacheDataStore @Inject constructor(
         year: String? = null,
         deviceSourceKind: String? = null,
         deviceSourceId: String? = null,
+        audioDelayMs: Int? = null
     ) {
         val payload = JSONObject().apply {
             put("url", url)
@@ -81,6 +83,7 @@ class StreamLinkCacheDataStore @Inject constructor(
             bingeGroup?.let { put("bingeGroup", it) }
             contentLanguage?.let { put("contentLanguage", it) }
             year?.let { put("year", it) }
+            audioDelayMs?.let { put("audioDelayMs", it) }
         }.toString()
 
         store().edit { prefs ->
@@ -146,7 +149,8 @@ class StreamLinkCacheDataStore @Inject constructor(
                 contentLanguage = json.optString("contentLanguage", "").ifBlank { null },
                 year = json.optString("year", "").ifBlank { null },
                 deviceSourceKind = json.optString("deviceSourceKind", "").ifBlank { null },
-                deviceSourceId = json.optString("deviceSourceId", "").ifBlank { null }
+                deviceSourceId = json.optString("deviceSourceId", "").ifBlank { null },
+                audioDelayMs = if (json.has("audioDelayMs")) json.optInt("audioDelayMs") else null
             )
         }.getOrNull()
 

@@ -73,6 +73,7 @@ interface MpvSurface {
     fun applySubtitleLanguagePreferences(preferred: String, secondary: String?)
     fun applySubtitleStyle(style: SubtitleStyleSettings)
     fun setSubtitleDelayMs(delayMs: Int)
+    fun setAudioDelayMs(delayMs: Int)
     fun reloadVideoTrack()
 
     // ── Audio/video config ────────────────────────────────────────────────────

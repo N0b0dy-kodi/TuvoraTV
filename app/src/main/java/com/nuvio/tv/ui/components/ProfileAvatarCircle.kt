@@ -25,6 +25,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import com.nuvio.tv.ui.theme.NuvioPrimitives
 
 @Composable
 fun ProfileAvatarCircle(
@@ -37,7 +38,7 @@ fun ProfileAvatarCircle(
     imageCrossfade: Boolean = true
 ) {
     val avatarColor = runCatching { Color(android.graphics.Color.parseColor(colorHex)) }
-        .getOrDefault(Color(0xFF1E88E5))
+        .getOrDefault(NuvioPrimitives.blue500)
     val initial = name.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
     val fontSize = (size.value * 0.4f).sp
     val context = LocalContext.current

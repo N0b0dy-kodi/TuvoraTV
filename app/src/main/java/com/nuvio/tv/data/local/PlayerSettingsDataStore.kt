@@ -1391,7 +1391,7 @@ class PlayerSettingsDataStore @Inject constructor(
 
     private fun normalizeSelectableLanguageCode(language: String): String {
         val code = language.trim().lowercase()
-        return when (code) { "pt-br", "pt_br", "br", "pob" -> "pt-br"; "pt-pt", "pt_pt", "por" -> "pt"; "forced", "force", "forc" -> SUBTITLE_LANGUAGE_FORCED; else -> code }
+        return when (code) { "pt-br", "pt_br", "br", "pob" -> "pt-br"; "pt-pt", "pt_pt", "por" -> "pt"; "forced", "force", "forc" -> SUBTITLE_LANGUAGE_FORCED; "iw", "heb", "hbo" -> "he"; else -> code }
     }
 
     private fun normalizeSecondaryAudioLanguageCode(language: String): String? {

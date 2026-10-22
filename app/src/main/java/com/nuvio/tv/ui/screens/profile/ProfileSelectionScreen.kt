@@ -1,6 +1,7 @@
 package com.nuvio.tv.ui.screens.profile
 
 import androidx.tv.material3.MaterialTheme
+import com.nuvio.tv.ui.theme.NuvioPrimitives
 import com.nuvio.tv.ui.util.contentTextDirection
 import com.nuvio.tv.ui.theme.NuvioMotion
 
@@ -1252,7 +1253,7 @@ private fun ProfileCard(
 
 private fun parseProfileColor(colorHex: String): Color {
     return runCatching { Color(android.graphics.Color.parseColor(colorHex)) }
-        .getOrDefault(Color(0xFF1E88E5))
+        .getOrDefault(NuvioPrimitives.blue500)
 }
 
 @Composable

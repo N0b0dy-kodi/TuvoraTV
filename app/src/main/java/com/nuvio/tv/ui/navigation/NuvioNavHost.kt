@@ -15,6 +15,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
@@ -22,6 +23,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.NavBackStackEntry
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -86,7 +88,13 @@ fun NuvioNavHost(
     hideBuiltInHeaders: Boolean = false
 ) {
     PlaybackAvailabilityProvider {
-        PlaybackNavHost(navController, startDestination, hideBuiltInHeaders)
+        // The NavController keeps its back stack ViewModels in the store of the owner it is
+        // composed under, so use the session store when MainActivity provides one.
+        val navViewModelStoreOwner = LocalNavViewModelStoreOwner.current
+            ?: checkNotNull(LocalViewModelStoreOwner.current)
+        CompositionLocalProvider(LocalViewModelStoreOwner provides navViewModelStoreOwner) {
+            PlaybackNavHost(navController, startDestination, hideBuiltInHeaders)
+        }
     }
 }
 
@@ -719,7 +727,8 @@ private fun PlaybackNavHost(
                                 infoHash = playbackInfo.infoHash,
                                 fileIdx = playbackInfo.fileIdx,
                                 sources = playbackInfo.sources,
-                                contentLanguage = playbackInfo.contentLanguage
+                                contentLanguage = playbackInfo.contentLanguage,
+                                audioDelayMs = playbackInfo.audioDelayMs
                             )
                         )
                     }
@@ -759,7 +768,8 @@ private fun PlaybackNavHost(
                                 infoHash = playbackInfo.infoHash,
                                 fileIdx = playbackInfo.fileIdx,
                                 sources = playbackInfo.sources,
-                                contentLanguage = playbackInfo.contentLanguage
+                                contentLanguage = playbackInfo.contentLanguage,
+                                audioDelayMs = playbackInfo.audioDelayMs
                             )
                         ) {
                             popUpTo(Screen.Stream.route) { inclusive = true }
@@ -948,6 +958,11 @@ private fun PlaybackNavHost(
                     defaultValue = null
                 },
                 navArgument("profileId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("audioDelayMs") {
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null

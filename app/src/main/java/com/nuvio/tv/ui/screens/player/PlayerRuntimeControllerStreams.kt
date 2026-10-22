@@ -595,6 +595,7 @@ private fun PlayerRuntimeController.applySelectedStreamState(
  */
 private fun PlayerRuntimeController.applyStreamMetadata(stream: Stream) {
     currentStreamBingeGroup = stream.behaviorHints?.bingeGroup
+    applyStreamAudioDelay(stream.behaviorHints?.audioDelayMs)
     currentVideoHash = stream.behaviorHints?.videoHash
     currentVideoSize = stream.behaviorHints?.videoSize
     currentAddonName = stream.addonName
@@ -642,7 +643,8 @@ private fun PlayerRuntimeController.persistSelectedStreamForReuse(
             contentLanguage = contentLanguage,
             year = year,
             deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
-            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
+            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
+            audioDelayMs = stream.behaviorHints?.audioDelayMs
         )
     }
 }
@@ -671,7 +673,8 @@ private fun PlayerRuntimeController.persistTorrentStreamForReuse(stream: Stream)
             contentLanguage = contentLanguage,
             year = year,
             deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
-            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef)
+            deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
+            audioDelayMs = stream.behaviorHints?.audioDelayMs
         )
     }
 }
