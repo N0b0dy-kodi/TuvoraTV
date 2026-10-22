@@ -1435,6 +1435,7 @@ fun PlayerScreen(
                         viewModel.onEvent(PlayerEvent.OnDismissPartyPanel)
                     },
                     onClose = { viewModel.onEvent(PlayerEvent.OnDismissPartyPanel) },
+                    chatHintVisible = viewModel.party.chatHintVisible.collectAsState().value,
                     modifier = Modifier.align(Alignment.CenterEnd)
                 )
             }

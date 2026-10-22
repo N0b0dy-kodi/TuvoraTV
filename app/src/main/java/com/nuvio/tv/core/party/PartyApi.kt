@@ -91,6 +91,13 @@ class PartyApi @Inject constructor(
     internal suspend fun enabledBody(): String =
         postgrest.rpc("watch_party_enabled").data
 
+    /** Raw history body, used only to learn whether the backend has chat; [PartyChatAvailabilityPolicy] reads it. */
+    internal suspend fun chatProbeBody(partyId: String, deviceId: String): String =
+        postgrest.rpc("watch_party_list_messages", buildJsonObject {
+            put("p_party_id", partyId)
+            put("p_device_id", deviceId)
+        }).data
+
     private suspend fun call(function: String, params: JsonObject): PartySnapshot {
         val body = postgrest.rpc(function, params).data
         return json.decodeFromString(PartySnapshot.serializer(), body)

@@ -528,11 +528,14 @@ private fun PartyContent(
                             leadingIcon = Icons.Rounded.PlayArrow,
                             modifier = Modifier.focusRequester(watchFocusRequester),
                         )
-                        PartyActions(
-                            party = party,
-                            onLeave = repository::leave,
-                            onEnd = repository::end,
-                        )
+                        val chatHint by repository.chatHintVisible.collectAsStateWithLifecycle()
+                        androidx.compose.runtime.CompositionLocalProvider(LocalPartyChatHint provides chatHint) {
+                            PartyActions(
+                                party = party,
+                                onLeave = repository::leave,
+                                onEnd = repository::end,
+                            )
+                        }
                     }
                 }
                 item(key = "party_members") {

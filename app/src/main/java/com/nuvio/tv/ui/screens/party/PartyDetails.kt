@@ -379,6 +379,9 @@ private fun PartyHint(
     }
 }
 
+/** Whether phone chat exists to point at; provided by the host of [PartyActions], hidden by default. */
+internal val LocalPartyChatHint = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 @Composable
 internal fun PartyActions(
     party: ActiveParty,
@@ -401,10 +404,12 @@ internal fun PartyActions(
                 leadingIcon = Icons.Rounded.StopCircle,
             )
         }
-        PartyHint(
-            icon = Icons.Rounded.Smartphone,
-            text = stringResource(R.string.party_phone_chat_note),
-        )
+        if (LocalPartyChatHint.current) {
+            PartyHint(
+                icon = Icons.Rounded.Smartphone,
+                text = stringResource(R.string.party_phone_chat_note),
+            )
+        }
     }
     if (confirmEnd) {
         ConfirmDialog(

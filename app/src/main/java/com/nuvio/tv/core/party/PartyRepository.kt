@@ -85,6 +85,13 @@ class PartyRepository @Inject constructor(
     private val _available = MutableStateFlow(serverConfiguration.capabilities.watchParty)
     val available: StateFlow<Boolean> = _available.asStateFlow()
 
+    private val _chatAvailable = MutableStateFlow(false)
+
+    /** Whether the "chat on your phone" hint may show: party available AND the backend has chat RPCs. */
+    val chatHintVisible: StateFlow<Boolean> = combine(_available, _chatAvailable) { party, chat ->
+        PartyChatAvailabilityPolicy.hintVisible(party, chat)
+    }.stateIn(scope, SharingStarted.Eagerly, false)
+
     val canUse: StateFlow<Boolean> = combine(_available, authManager.authState) { available, auth ->
         available && auth is AuthState.FullAccount
     }.stateIn(scope, SharingStarted.Eagerly, false)
@@ -146,6 +153,19 @@ class PartyRepository @Inject constructor(
             _available.value = enabled
             if (!enabled) finish(PartyEvent.Ended)
         }
+    }
+
+    private suspend fun probeChat(party: ActiveParty) {
+        val probe = try {
+            PartyChatAvailabilityPolicy.classifyBody(api.chatProbeBody(party.id, deviceId()))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: PostgrestRestException) {
+            PartyChatAvailabilityPolicy.probeOfFailure(error.code, error.statusCode)
+        } catch (error: Throwable) {
+            PartyChatProbe.Inconclusive
+        }
+        _chatAvailable.value = PartyChatAvailabilityPolicy.next(_chatAvailable.value, probe)
     }
 
     suspend fun create(media: PartyMedia): PartyError? =
@@ -318,6 +338,7 @@ class PartyRepository @Inject constructor(
         resumedAt = null
         _playback.value = playback?.takeIf { it.mediaKey == null || it.mediaKey == party.media.key }
         _state.value = PartyUiState(party = party)
+        session.launch { probeChat(party) }
         session.launch {
             runCatching {
                 partyChannel.open(

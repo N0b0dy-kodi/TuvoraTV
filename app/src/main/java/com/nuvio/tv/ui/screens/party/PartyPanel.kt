@@ -78,7 +78,9 @@ fun PartyPanel(
     onCatchUp: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    chatHintVisible: Boolean = false,
 ) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalPartyChatHint provides chatHintVisible) {
     // Close is the panel's fallback focus: when the start button cannot be pressed (signed out,
     // feature off) or the party content just went away, focus lands here instead of staying on the
     // control behind the scrim, where D-pad presses would act on a player the user cannot see.
@@ -147,6 +149,7 @@ fun PartyPanel(
                 }
             }
         }
+    }
     }
 }
 
