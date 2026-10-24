@@ -68,10 +68,18 @@ class LiveControlsPolicyTest {
     }
 
     @Test
-    fun `MENU hides the channel, the KeyUp halves are consumed`() {
-        assertEquals("menu", KeyAction.HIDE_CHANNEL, key(Key.Menu))
+    fun `MENU opens options, the KeyUp halves are consumed`() {
+        assertEquals("menu", KeyAction.OPEN_CHANNEL_MENU, key(Key.Menu))
         assertEquals("ok up", KeyAction.CONSUME, key(Key.DirectionCenter, down = false))
         assertEquals("menu up", KeyAction.CONSUME, key(Key.Menu, down = false))
+    }
+
+    @Test fun `guide Left opens the channel browser without repeating or stealing control and panel keys`() {
+        assertEquals(KeyAction.OPEN_CHANNEL_LIST, LiveControlsPolicy.keyAction(Key.DirectionLeft, true, false, false, false, hasLineup = true))
+        assertEquals(KeyAction.CONSUME, LiveControlsPolicy.keyAction(Key.DirectionLeft, false, false, false, false, hasLineup = true))
+        assertEquals(KeyAction.CONSUME, LiveControlsPolicy.keyAction(Key.DirectionLeft, true, false, false, false, isRepeat = true, hasLineup = true))
+        assertEquals(KeyAction.PASS_AND_KEEP_ALIVE, LiveControlsPolicy.keyAction(Key.DirectionLeft, true, true, false, false, hasLineup = true))
+        assertEquals(KeyAction.PASS, LiveControlsPolicy.keyAction(Key.DirectionLeft, true, false, false, true, hasLineup = true))
     }
 
     @Test

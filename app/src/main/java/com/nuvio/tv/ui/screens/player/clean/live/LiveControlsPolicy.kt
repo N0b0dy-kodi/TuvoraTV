@@ -8,7 +8,8 @@ import androidx.compose.ui.input.key.Key
  * One overlay serves the guide's fullscreen and the clean live player, built from the VOD player's
  * own pieces. The owner's rules (2026-10-03) are encoded here and nowhere else:
  *  - OK with the controls hidden SHOWS them (never play/pause), so zapping can't pause by accident;
- *  - UP/DOWN with the controls hidden change channel; LEFT/RIGHT reveal the controls and then move
+ *  - UP/DOWN with the controls hidden change channel; guide LEFT opens its channel browser.
+ *    Other directions reveal the controls and then move
  *    focus along them — there is no timeline, so no scrubbing;
  *  - BACK closes a panel first, then hides the controls, then leaves (to the guide);
  *  - one auto-hide delay shared with VOD, never while paused, on an error or with a panel open.
@@ -29,7 +30,8 @@ internal object LiveControlsPolicy {
         ZAP_PREVIOUS,
         ZAP_NEXT,
         ZAP_BACK,
-        HIDE_CHANNEL,
+        OPEN_CHANNEL_MENU,
+        OPEN_CHANNEL_LIST,
     }
 
     private val directional = setOf(
@@ -67,14 +69,14 @@ internal object LiveControlsPolicy {
         }
         if (controlsVisible) {
             // The buttons own the D-pad now; every press keeps them up. MENU is not a control key.
-            if (key == Key.Menu) return if (isKeyDown) KeyAction.HIDE_CHANNEL else KeyAction.CONSUME
+            if (key == Key.Menu) return if (isKeyDown && !isRepeat) KeyAction.OPEN_CHANNEL_MENU else KeyAction.CONSUME
             return KeyAction.PASS_AND_KEEP_ALIVE
         }
         if (!isKeyDown) return KeyAction.CONSUME
         return when (key) {
             Key.DirectionUp -> KeyAction.ZAP_PREVIOUS
             Key.DirectionDown -> KeyAction.ZAP_NEXT
-            Key.Menu -> KeyAction.HIDE_CHANNEL
+            Key.Menu -> if (isRepeat) KeyAction.CONSUME else KeyAction.OPEN_CHANNEL_MENU
             // OK, LEFT, RIGHT: bring the controls up; never pause, never scrub.
             else -> KeyAction.SHOW_CONTROLS
         }

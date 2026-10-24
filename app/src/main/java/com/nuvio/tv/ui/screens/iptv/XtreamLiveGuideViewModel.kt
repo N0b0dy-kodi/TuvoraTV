@@ -1050,10 +1050,9 @@ class XtreamLiveGuideViewModel @Inject constructor(
     }
 
     /**
-     * F03: MENU on a row — the small menu for a favourite or a pinned channel
-     * ([GuideChannelMenuPolicy]), or null: hide it straight away, as before.
+     * Actions for the focused channel. Opening the menu never modifies personalization.
      */
-    fun channelMenu(channel: GuideChannel): List<GuideChannelMenuPolicy.Action>? {
+    fun channelMenu(channel: GuideChannel): List<GuideChannelMenuPolicy.Action> {
         val state = _uiState.value
         val special = state.categories.firstOrNull { it.id == state.selectedCategoryId }?.special
         val favouritesView = special == GuideSpecial.FAVORITES || special == GuideSpecial.ALL_FAVORITES

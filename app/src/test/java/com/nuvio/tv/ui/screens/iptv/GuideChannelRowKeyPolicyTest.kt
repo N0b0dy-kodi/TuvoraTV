@@ -22,7 +22,7 @@ class GuideChannelRowKeyPolicyTest {
 
     @Test
     fun `MENU on a focused channel row hides the channel`() {
-        assertEquals("MENU down hides", Action.HIDE_CHANNEL, action(Key.Menu))
+        assertEquals("MENU down opens options", Action.OPEN_CHANNEL_MENU, action(Key.Menu))
     }
 
     @Test

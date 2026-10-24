@@ -24,8 +24,8 @@ internal object GuideChannelRowKeyPolicy {
         /** LEFT: back to the category column. */
         EXIT_CATEGORY,
 
-        /** MENU: hide the channel (overlay write + notice with Undo, same path as fullscreen). */
-        HIDE_CHANNEL,
+        /** MENU: open explicit channel actions. */
+        OPEN_CHANNEL_MENU,
     }
 
     fun actionFor(
@@ -42,7 +42,7 @@ internal object GuideChannelRowKeyPolicy {
         if (lockFocus || timelineActive || !rowFocused) return Action.PASS
         // MENU: both halves are ours, so the KeyUp can't fall through to the activity once the
         // DOWN has hidden the row (the same consumption the category row's MENU uses).
-        if (key == Key.Menu) return if (isKeyDown) Action.HIDE_CHANNEL else Action.CONSUME
+        if (key == Key.Menu) return if (isKeyDown) Action.OPEN_CHANNEL_MENU else Action.CONSUME
         if (!isKeyDown) return Action.PASS
         return when (key) {
             Key.DirectionRight -> Action.ENTER_TIMELINE

@@ -186,7 +186,8 @@ internal fun CleanLivePlayerScreen(
                         if (uiState.controlsEnabled) onZapNext() else return@onPreviewKeyEvent false
                     // No lineup history or hideable channel identity on this destination.
                     LiveControlsPolicy.KeyAction.ZAP_BACK,
-                    LiveControlsPolicy.KeyAction.HIDE_CHANNEL -> showControls()
+                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_LIST,
+                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_MENU -> showControls()
                 }
                 true
             },

@@ -8,9 +8,9 @@ import org.junit.Test
 class GuideChannelMenuPolicyTest {
 
     @Test
-    fun `an ordinary channel is still hidden straight away`() {
-        assertNull(GuideChannelMenuPolicy.menu(special = null, isPinned = false, indexInList = 3, listSize = 10))
-        assertNull(GuideChannelMenuPolicy.menu(special = GuideSpecial.RECENT, isPinned = true, indexInList = 0, listSize = 2))
+    fun `an ordinary channel offers explicit hide without modifying the lineup`() {
+        assertEquals(listOf(Action.HIDE), GuideChannelMenuPolicy.menu(special = null, isPinned = false, indexInList = 3, listSize = 10))
+        assertEquals(listOf(Action.HIDE), GuideChannelMenuPolicy.menu(special = GuideSpecial.RECENT, isPinned = true, indexInList = 0, listSize = 2))
     }
 
     @Test

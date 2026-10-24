@@ -59,6 +59,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import com.nuvio.tv.core.iptv.GuideDisplayPreferences
+import com.nuvio.tv.core.iptv.GuideLayoutPreset
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -112,6 +115,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.CircularProgressIndicator
 import com.nuvio.tv.ui.theme.NuvioTheme
 import com.nuvio.tv.ui.screens.player.clean.CleanLivePlayerUiPolicy
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
 /**
@@ -138,6 +142,13 @@ fun LiveGuide(
     val playbackViewModel: CleanLiveGuidePlaybackViewModel = hiltViewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val favoriteIds by viewModel.favoriteLiveIds.collectAsStateWithLifecycle()
+    val appContext = LocalContext.current.applicationContext
+    val displayPreferences = remember(appContext) { GuideDisplayPreferences(appContext) }
+    val guideLayout by displayPreferences.layout.collectAsStateWithLifecycle(initialValue = GuideLayoutPreset.DEFAULT)
+    val displayScope = rememberCoroutineScope()
+    var layoutPickerOpen by remember { mutableStateOf(false) }
+    val previewPaneHeight = guideLayout.previewHeightDp.dp
+
     // Keyed on the whole account (not just id) so option edits (category selections) re-filter.
     LaunchedEffect(account) { viewModel.setAccount(account) }
 
@@ -192,7 +203,7 @@ fun LiveGuide(
     var pendingRestoreEntityId by remember(account.id, uiState.selectedCategoryId) { mutableStateOf<String?>(null) }
     LaunchedEffect(pendingRestoreEntityId, uiState.channels) {
         val origin = pendingRestoreEntityId ?: return@LaunchedEffect
-        val index = uiState.channels.indexOfFirst { it.entityId == origin }
+        val index = uiState.channels.distinctBy { it.contentId }.indexOfFirst { it.entityId == origin }
         if (index < 0) return@LaunchedEffect // The overlay projection has not restored it yet.
         channelListState.scrollToItem(index)
         // Let the removed toast and restored lazy item settle before retiring the intent.
@@ -305,8 +316,8 @@ fun LiveGuide(
     val lifecycleOwner = LocalLifecycleOwner.current
     val surfaceOwner = remember(context) { FrameLayout(context) }
     val density = LocalDensity.current
-    val previewViewport = remember(density) {
-        val heightPx = with(density) { PREVIEW_PANE_HEIGHT.roundToPx() }
+    val previewViewport = remember(density, previewPaneHeight) {
+        val heightPx = with(density) { previewPaneHeight.roundToPx() }
         VideoDimensions(width = heightPx * 16 / 9, height = heightPx)
     }
     var playbackAccountId by remember { mutableStateOf<String?>(null) }
@@ -527,7 +538,7 @@ fun LiveGuide(
             // TiviMate-style right side: video (left slot, overlay below covers it) + program
             // info, then a half-hour time header over the channel/EPG timeline grid.
             Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().height(PREVIEW_PANE_HEIGHT)) {
+                Row(Modifier.fillMaxWidth().height(previewPaneHeight)) {
                     Spacer(Modifier.fillMaxHeight().aspectRatio(16f / 9f))
                     PreviewInfoPane(
                         channelName = uiState.focusedChannel?.name,
@@ -566,7 +577,7 @@ fun LiveGuide(
                 GuideTimeHeaderWithDay(
                     windowStartMs = windowStartMs,
                     nowMs = nowMs,
-                    labelWidth = CHANNEL_LABEL_WIDTH,
+                    labelWidth = guideLayout.channelWidthDp.dp,
                 )
 
                 // Both waits end at their own deadline even if the work never returns (BoundedLoad).
@@ -589,9 +600,9 @@ fun LiveGuide(
                         ),
                         onRetry = viewModel::retry
                     )
-                    channelsStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading -> GuideChannelListSkeleton()
+                    channelsStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading -> GuideChannelListSkeleton(guideLayout)
                     // Before the category column lands there is nothing selected yet: still loading, not empty.
-                    categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading && uiState.channels.isEmpty() -> GuideChannelListSkeleton()
+                    categoriesStatus is com.nuvio.tv.core.iptv.LoadStatus.Loading && uiState.channels.isEmpty() -> GuideChannelListSkeleton(guideLayout)
                     uiState.selectedCategoryId == XtreamLiveGuideViewModel.SEARCH_ID && uiState.channels.isEmpty() -> EmptyScreenState(
                         title = if (uiState.searchQuery.isBlank()) "Search channels" else "No channels match \u201C${uiState.searchQuery}\u201D",
                         subtitle = "Press OK on Search to type a channel name",
@@ -626,6 +637,7 @@ fun LiveGuide(
                                 entryFocusRequester = if (index == 0) firstChannelFocus else null,
                                 clampUp = index == 0,
                                 upFocusRequester = if (awayFromNow && index == 0) returnToNowFocus else null,
+                                layout = guideLayout,
                                 number = index + 1,
                                 name = ch.name,
                                 // A play glyph icon marks what the preview player is tuned to.
@@ -651,12 +663,12 @@ fun LiveGuide(
                                         else -> selectChannel(ch.contentId)
                                     }
                                 },
-                                onLongClick = { viewModel.toggleFavorite(ch) },
-                                // B106: MENU on the row hides it, the same call fullscreen makes —
+                                onLongClick = { channelMenuAsk = ch to viewModel.channelMenu(ch) },
+                                // MENU and long OK offer the same explicit actions as fullscreen —
                                 // F03: on a favourite or a pinned channel it opens Move up / down first.
                                 onHide = {
                                     val menu = viewModel.channelMenu(ch)
-                                    if (menu == null) viewModel.hideChannel(ch) else channelMenuAsk = ch to menu
+                                    channelMenuAsk = ch to menu
                                 },
                                 channel = ch,
                                 catchUpSupported = uiState.catchUpSupported,
@@ -718,7 +730,7 @@ fun LiveGuide(
                 else Modifier
                     .align(Alignment.TopStart)
                     .padding(start = GUIDE_START_PADDING + categoryColWidth + NuvioTheme.spacing.md)
-                    .height(PREVIEW_PANE_HEIGHT)
+                    .height(previewPaneHeight)
                     .aspectRatio(16f / 9f)
                 ).background(Color.Black)
         ) {
@@ -919,43 +931,36 @@ fun LiveGuide(
             )
         }
 
+        fun returnFromMenu() {
+            channelMenuAsk = null
+            if (fullscreen) fullscreenAnchor.requestFocusOrFalse()
+            else pendingRestoreEntityId = uiState.focusedChannel?.entityId
+        }
         channelMenuAsk?.let { (channel, actions) ->
-            val firstFocus = remember { FocusRequester() }
-            LaunchedEffect(channel.contentId) { firstFocus.requestFocus() }
-            NuvioDialog(
-                onDismiss = { channelMenuAsk = null },
-                title = channel.name,
-                width = 420.dp
-            ) {
-                actions.forEachIndexed { i, action ->
-                    Button(
-                        onClick = {
-                            channelMenuAsk = null
-                            when (action) {
-                                GuideChannelMenuPolicy.Action.MOVE_UP -> viewModel.moveChannel(channel, -1)
-                                GuideChannelMenuPolicy.Action.MOVE_DOWN -> viewModel.moveChannel(channel, +1)
-                                GuideChannelMenuPolicy.Action.REMOVE_FAVORITE -> viewModel.toggleFavorite(channel)
-                                GuideChannelMenuPolicy.Action.HIDE -> viewModel.hideChannel(channel)
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().let { if (i == 0) it.focusRequester(firstFocus) else it }
-                    ) {
-                        Text(
-                            stringResource(
-                                when (action) {
-                                    GuideChannelMenuPolicy.Action.MOVE_UP -> R.string.iptv_guide_move_up
-                                    GuideChannelMenuPolicy.Action.MOVE_DOWN -> R.string.iptv_guide_move_down
-                                    GuideChannelMenuPolicy.Action.REMOVE_FAVORITE -> R.string.iptv_guide_remove_favorite
-                                    GuideChannelMenuPolicy.Action.HIDE -> R.string.iptv_guide_hide_channel
-                                }
-                            )
-                        )
+            GuideChannelActionsDialog(
+                channelName = channel.name,
+                favorite = channel.contentId in favoriteIds,
+                actions = actions,
+                onFavorite = { returnFromMenu(); viewModel.toggleFavorite(channel) },
+                onAction = { action ->
+                    returnFromMenu()
+                    when (action) {
+                        GuideChannelMenuPolicy.Action.MOVE_UP -> viewModel.moveChannel(channel, -1)
+                        GuideChannelMenuPolicy.Action.MOVE_DOWN -> viewModel.moveChannel(channel, +1)
+                        GuideChannelMenuPolicy.Action.REMOVE_FAVORITE -> viewModel.toggleFavorite(channel)
+                        GuideChannelMenuPolicy.Action.HIDE -> viewModel.hideChannel(channel)
                     }
-                }
-                Button(onClick = { channelMenuAsk = null }, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
+                },
+                onGuideSize = { channelMenuAsk = null; layoutPickerOpen = true },
+                onDismiss = ::returnFromMenu,
+            )
+        }
+        if (layoutPickerOpen) {
+            GuideLayoutDialog(guideLayout, onSelect = { selected ->
+                displayScope.launch { displayPreferences.setLayout(selected) }
+                layoutPickerOpen = false
+                returnFromMenu()
+            }, onDismiss = { layoutPickerOpen = false; returnFromMenu() })
         }
 
         // F03: All favorites spans playlists — another playlist's channel switches the guide to that
@@ -970,6 +975,7 @@ fun LiveGuide(
             if (uiState.channels.none { it.contentId == pending }) return@LaunchedEffect
             if (!pending.startsWith(XtreamItemRegistry.accountPrefix(uiState.accountId ?: return@LaunchedEffect))) return@LaunchedEffect
             viewModel.consumePendingTune()
+            pendingRestoreEntityId = uiState.channels.firstOrNull { it.contentId == pending }?.entityId
             commitPreview(pending)
         }
 
@@ -1081,20 +1087,20 @@ internal object LiveGuidePreviewErrorPolicy {
 /** Shimmer stand-in for the channel list while a category loads — same row geometry as
  *  [GuideChannelRow] (label block + timeline cells) so the real rows land without a shift. */
 @Composable
-private fun GuideChannelListSkeleton() {
+private fun GuideChannelListSkeleton(layout: GuideLayoutPreset) {
     val shimmerOffsetState = rememberPlaceholderShimmerOffsetState(label = "guideChannelSkeleton")
     Column(Modifier.fillMaxSize()) {
         repeat(GUIDE_SKELETON_ROW_COUNT) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(GUIDE_ROW_HEIGHT)
+                    .height(layout.rowHeightDp.dp)
                     .padding(horizontal = NuvioTheme.spacing.md, vertical = 1.dp)
                     .padding(horizontal = NuvioTheme.spacing.sm),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.width(CHANNEL_LABEL_WIDTH).fillMaxHeight(),
+                    modifier = Modifier.width(layout.channelWidthDp.dp).fillMaxHeight(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
                 ) {
@@ -1234,7 +1240,7 @@ internal fun GuideChannelRow(
     onFocused: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    /** MENU on the focused row: hide the channel (B106). */
+    /** MENU on the focused row opens explicit channel actions. */
     onHide: () -> Unit,
     focusRequester: FocusRequester? = null,
     entryFocusRequester: FocusRequester? = null,
@@ -1255,6 +1261,7 @@ internal fun GuideChannelRow(
     /** The timeline strip's requester — where entering lands when no cell is actionable (B114). */
     stripFocus: FocusRequester? = null,
     nowFraction: Float? = null,
+    layout: GuideLayoutPreset = GuideLayoutPreset.STANDARD,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val latestOnFocused by rememberUpdatedState(onFocused)
@@ -1275,7 +1282,7 @@ internal fun GuideChannelRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(GUIDE_ROW_HEIGHT)
+            .height(layout.rowHeightDp.dp)
             .padding(horizontal = NuvioTheme.spacing.md, vertical = 1.dp)
             .clip(RoundedCornerShape(NuvioTheme.radii.sm))
             // Focus = Primary fill + 2dp Primary border (the app's D-pad vocabulary) without
@@ -1325,9 +1332,8 @@ internal fun GuideChannelRow(
                     // search: the column is collapsed to zero width at this point, so there is
                     // nothing for a search to land on.
                     GuideChannelRowKeyPolicy.Action.EXIT_CATEGORY -> { onExitCategory?.invoke(); true }
-                    // MENU hides the channel through the same path fullscreen uses (overlay write +
-                    // notice with Undo), which is what the guide hint has always promised.
-                    GuideChannelRowKeyPolicy.Action.HIDE_CHANNEL -> { onHide(); true }
+                    // The caller opens channel actions; hide remains an explicit menu choice.
+                    GuideChannelRowKeyPolicy.Action.OPEN_CHANNEL_MENU -> { onHide(); true }
                 }
             }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -1336,7 +1342,7 @@ internal fun GuideChannelRow(
     ) {
         // Fixed label block: number | logo | name (+favorite star) — the timeline cells fill the rest.
         Row(
-            modifier = Modifier.width(CHANNEL_LABEL_WIDTH).fillMaxHeight(),
+            modifier = Modifier.width(layout.channelWidthDp.dp).fillMaxHeight(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(NuvioTheme.spacing.sm)
         ) {
@@ -1525,7 +1531,7 @@ internal fun PreviewInfoPane(
         // Two lines: with the category column open the panel is narrow, and one line cut the hint
         // off at "hold OK to" — the part that says what holding does (seen on the emulator).
         Text(
-            text = stringResource(R.string.iptv_guide_hint),
+            text = stringResource(R.string.iptv_guide_remote_hint),
             style = MaterialTheme.typography.labelSmall,
             color = NuvioTheme.colors.TextSecondary.copy(alpha = 0.7f),
             maxLines = 2,
@@ -1565,10 +1571,7 @@ private fun LiveRetryStatus(
 
 private fun timeRange(p: XtreamProgram): String = "${guideHhMm(p.startMs)}–${guideHhMm(p.endMs)}"
 
-private val PREVIEW_PANE_HEIGHT = 180.dp
 private val CATEGORY_COL_WIDTH = 220.dp
-private val CHANNEL_LABEL_WIDTH = 230.dp
-private val GUIDE_ROW_HEIGHT = 44.dp
 private val GUIDE_START_PADDING = 52.dp                   // the app-wide content gutter (Modern rails)
 private const val GUIDE_SKELETON_ROW_COUNT = 10
 
