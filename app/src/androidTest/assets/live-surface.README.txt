@@ -1,0 +1,12 @@
+Synthetic, silent 12-second H.264 MPEG-TS pattern for LiveGpuSurfaceDeviceTest.
+Generated locally; no provider, account or copyrighted media.
+
+Regenerate from the repository root (ffmpeg with libx264):
+ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc2=size=320x180:rate=24 -t 12 -an -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 24 -f mpegts app/src/androidTest/assets/live-surface.ts
+
+Run the device test only on a disposable Android TV emulator with audio disabled:
+adb -s emulator-5556 shell am instrument -w -r -e isolatedReleaseGate true -e class com.nuvio.tv.playback.host.LiveGpuSurfaceDeviceTest com.tuvora.tv.debug.test/androidx.test.runner.AndroidJUnitRunner
+
+It exercises the actual bundled libmpv GPU path, preview/fullscreen resizing,
+unexpected TextureView removal, deferred teardown and acknowledged resource release.
+It does not establish hardware decoder, audible audio, HDR or provider correctness.

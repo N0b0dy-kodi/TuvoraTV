@@ -377,6 +377,52 @@ class CleanLiveSurfaceCoordinatorTest {
     }
 
     @Test
+    fun `lost GPU texture stays alive until renderer detach is acknowledged`() = runTest {
+        val owner = owner()
+        val surface = validSurface()
+        val texture = mockk<SurfaceTexture>(relaxed = true)
+        val coordinator = coordinator(owner, setOf(SurfaceMode.GPU_RENDER), mpvSurfaceFactory = { surface })
+        start(coordinator)
+        val lease = mpvLease(coordinator, SurfaceMode.GPU_RENDER)
+        lease.markAttached()
+        val listener = (owner.getChildAt(0) as TextureView).surfaceTextureListener!!
+
+        assertFalse("Framework must not dispose a texture still owned by libmpv", listener.onSurfaceTextureDestroyed(texture))
+        verify(exactly = 0) { texture.release() }
+        assertFalse(lease.release())
+        assertFalse(coordinator.disposeAfterSessionRelease())
+        verify(exactly = 0) { surface.release() }
+
+        lease.confirmDetached()
+        assertTrue(lease.release())
+        drainMain()
+        io.mockk.verifyOrder { surface.release(); texture.release() }
+        verify(exactly = 1) { texture.release() }
+        assertEquals(0, owner.childCount)
+        assertTrue(lease.release())
+        verify(exactly = 1) { texture.release() }
+    }
+
+    @Test
+    fun `stopping host notifications cannot dispose an attached GPU texture early`() = runTest {
+        val owner = owner()
+        val texture = mockk<SurfaceTexture>(relaxed = true)
+        val coordinator = coordinator(owner, setOf(SurfaceMode.GPU_RENDER))
+        start(coordinator)
+        val lease = mpvLease(coordinator, SurfaceMode.GPU_RENDER)
+        lease.markAttached()
+        val listener = (owner.getChildAt(0) as TextureView).surfaceTextureListener!!
+        coordinator.stopHosting()
+
+        assertFalse(listener.onSurfaceTextureDestroyed(texture))
+        verify(exactly = 0) { texture.release() }
+        lease.confirmCoreDestroyed()
+        assertTrue(lease.release())
+        drainMain()
+        verify(exactly = 1) { texture.release() }
+    }
+
+    @Test
     fun `actually removed surface publishes host readiness and replacement recovers`() = runTest {
         val commands = mutableListOf<PlaybackCommand>()
         val owner = owner()

@@ -196,6 +196,9 @@ android {
         buildConfigField("String", "SIMKL_APP_NAME", buildConfigString(resolveProperty(devProperties, localProperties, "SIMKL_APP_NAME", "tuvora")))
         buildConfigField("String", "TMDB_API_KEY", "\"${localProperties.getProperty("TMDB_API_KEY", "")}\"")
         buildConfigField("boolean", "FEATURE_CUSTOM_SERVER_CONNECTIONS_ENABLED", "false")
+        // Explicit debug-only hardware experiment; normal and release builds stay off.
+        buildConfigField("boolean", "LIVE_PLAYER_VIEW_PROTOTYPE",
+            (providers.gradleProperty("livePlayerViewPrototype").orNull == "true").toString())
         buildConfigField("String", "SUPPORTERS_API_BASE_URL", buildConfigString(localProperties.getProperty("SUPPORTERS_API_BASE_URL", "https://tuvora.co/")))
         buildConfigField("String", "SUPPORT_URL", buildConfigString(localProperties.getProperty("SUPPORT_URL", "https://tuvora.co/")))
         // Fork keeps its own TV-login approver + IPTV pairing page (upstream's nuvio.tv host

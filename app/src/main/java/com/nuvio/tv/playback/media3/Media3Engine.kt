@@ -238,7 +238,7 @@ class Media3Engine internal constructor(
                 // Keep the surface lease, but require proof of player death before creating another.
                 when (val released = retained.release()) {
                     is PlaybackResult.Failure -> return@withLock released
-                    is PlaybackResult.Success -> Unit
+                    is PlaybackResult.Success -> currentLease.confirmPlayerReleased()
                 }
                 backend = null
                 activeRequest = null
@@ -273,7 +273,10 @@ class Media3Engine internal constructor(
                 val attached = candidate.attachSurface(currentLease)
                 if (attached is PlaybackResult.Failure) {
                     return@withLock when (val released = candidate.release()) {
-                        is PlaybackResult.Success -> attached
+                        is PlaybackResult.Success -> {
+                            currentLease.confirmPlayerReleased()
+                            attached
+                        }
                         is PlaybackResult.Failure -> {
                             backend = candidate
                             released
@@ -304,6 +307,7 @@ class Media3Engine internal constructor(
                         when (val released = candidate.release()) {
                             is PlaybackResult.Failure -> released
                             is PlaybackResult.Success -> {
+                                currentLease.confirmPlayerReleased()
                                 backend = null
                                 activeRequest = null
                                 activeGraph = null
@@ -439,6 +443,9 @@ class Media3Engine internal constructor(
         eventJob = null
         backend = null
         val currentLease = lease
+        // Also covers a PlayerView setter that took ownership before attach reported failure.
+        // The backend's successful termination above proves this player's renderer has stopped.
+        if (current != null) currentLease?.confirmPlayerReleased()
         if (currentLease != null && !currentLease.release()) {
             return@withLock failure(FailurePhase.RELEASE, FailureCode.SURFACE_LOST)
         }

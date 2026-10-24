@@ -25,6 +25,7 @@ import com.nuvio.tv.playback.core.SurfaceMode
 import com.nuvio.tv.playback.media3.Media3SurfaceHost
 import com.nuvio.tv.playback.media3.Media3SurfaceLease
 import com.nuvio.tv.playback.media3.ViewMedia3SurfaceHost
+import com.nuvio.tv.playback.media3.PlayerViewPresentation
 import com.nuvio.tv.playback.mpv.MpvSurfaceHost
 import com.nuvio.tv.playback.mpv.MpvSurfaceLease
 import com.nuvio.tv.playback.ui.PlaybackSessionController
@@ -57,6 +58,8 @@ internal class CleanLiveSurfaceCoordinator(
     private val awaitSurfaceValidity: suspend (View, Long) -> Boolean = ::awaitAndroidSurfaceValidity,
     private val mpvSurfaceFactory: (View) -> Surface? = ::androidMpvSurface,
     private val frameCapturer: SurfaceFrameCapturer = PixelCopyFrameCapturer,
+    /** Opt-in comparison path; production rollout follows native transition validation. */
+    private val media3PlayerViewEnabled: Boolean = false,
 ) {
     init {
         require(owner.childCount == 0) { "Clean playback surface owner must start empty" }
@@ -183,7 +186,7 @@ internal class CleanLiveSurfaceCoordinator(
             cleanupReleasedSlot()
             if (current != null) return@withLock failure()
             val slot = when (mode) {
-                SurfaceMode.SURFACE_VIEW -> createSurfaceViewSlot(mode, secure)
+                SurfaceMode.SURFACE_VIEW -> if (media3PlayerViewEnabled) createPlayerViewSlot(secure) else createSurfaceViewSlot(mode, secure)
                 SurfaceMode.TEXTURE_VIEW -> createTextureViewSlot(mode)
                 else -> error("validated Media3 mode")
             }
@@ -195,14 +198,15 @@ internal class CleanLiveSurfaceCoordinator(
             var leased = false
             try {
                 if (!awaitValid(slot)) return@withLock failure()
-                val result = ViewMedia3SurfaceHost(
+                val host = slot.presentation?.host(mainDispatcher) { markMedia3Released(slot) } ?: ViewMedia3SurfaceHost(
                     surfaceView = { slot.view as? SurfaceView },
                     textureView = { slot.view as? TextureView },
                     viewDispatcher = mainDispatcher,
                     onReleasedView = { releasedView ->
                         if (releasedView === slot.view) markMedia3Released(slot)
                     },
-                ).acquire(mode, secure)
+                )
+                val result = host.acquire(mode, secure)
                 leased = result is PlaybackResult.Success
                 when (result) {
                     is PlaybackResult.Failure -> result
@@ -399,6 +403,15 @@ internal class CleanLiveSurfaceCoordinator(
         return install(SurfaceSlot(token, mode, view))
     }
 
+    private fun createPlayerViewSlot(secure: Boolean): SurfaceSlot {
+        val token = newToken()
+        val presentation = PlayerViewPresentation.create(owner.context)
+        val surface = presentation.videoSurface
+        surface.setSecure(secure)
+        surface.holder.addCallback(surfaceCallback(token))
+        return install(SurfaceSlot(token, SurfaceMode.SURFACE_VIEW, surface, presentation = presentation))
+    }
+
     private fun createTextureViewSlot(mode: SurfaceMode): SurfaceSlot {
         val token = newToken()
         val view = TextureView(owner.context).apply {
@@ -414,7 +427,7 @@ internal class CleanLiveSurfaceCoordinator(
         currentToken = slot.token
         // Index 0: the freeze frame must stay above any surface, including a replacement one.
         owner.addView(
-            slot.view,
+            slot.presentation?.view ?: slot.view,
             0,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -435,9 +448,11 @@ internal class CleanLiveSurfaceCoordinator(
     private fun removeControlled(slot: SurfaceSlot) {
         if (current !== slot) return
         controlledRemovalToken = slot.token
-        owner.removeView(slot.view)
+        owner.removeView(slot.presentation?.view ?: slot.view)
         slot.ownedSurface?.release()
         slot.ownedSurface = null
+        slot.retainedTextures.forEach(SurfaceTexture::release)
+        slot.retainedTextures.clear()
         current = null
         currentToken = null
         controlledRemovalToken = null
@@ -475,6 +490,19 @@ internal class CleanLiveSurfaceCoordinator(
 
         override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) = Unit
         override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+            val slot = current?.takeIf {
+                it.token == token && !it.released && token != controlledRemovalToken &&
+                    it.mode == SurfaceMode.GPU_RENDER
+            }
+            if (slot != null) {
+                // libmpv can still render until its asynchronous detach/release is acknowledged.
+                // Returning true lets Android destroy its buffer queue before that proof exists.
+                // Keep ownership even after stopHosting suppresses availability notifications;
+                // removeControlled releases these textures only after the lease is safe to remove.
+                slot.retainedTextures += surface
+                enqueueAvailability(token, false)
+                return false
+            }
             enqueueAvailability(token, false)
             return true
         }
@@ -548,6 +576,8 @@ internal class CleanLiveSurfaceCoordinator(
         @Volatile var released: Boolean = false,
         @Volatile var unexpectedlyLost: Boolean = false,
         var ownedSurface: Surface? = null,
+        val retainedTextures: MutableSet<SurfaceTexture> = linkedSetOf(),
+        val presentation: PlayerViewPresentation? = null,
     )
 
     private fun failure(): PlaybackResult.Failure = PlaybackResult.Failure(

@@ -2,6 +2,7 @@ package com.nuvio.tv.playback.host
 
 import com.nuvio.tv.core.picture.AspectMode
 import com.nuvio.tv.core.picture.VideoZoom
+import com.nuvio.tv.BuildConfig
 import android.app.Activity
 import android.content.Context
 import android.widget.FrameLayout
@@ -85,6 +86,7 @@ internal class AndroidCleanLiveHostFactory @Inject constructor(
                 callbackScope = input.parentScope,
                 constructibleModes = PRODUCTION_CONSTRUCTIBLE_SURFACE_MODES,
                 secureMedia3SurfaceViewSupported = true,
+                media3PlayerViewEnabled = BuildConfig.IS_DEBUG_BUILD && BuildConfig.LIVE_PLAYER_VIEW_PROTOTYPE,
             )
         }
         val host = CleanLivePlaybackHost.create(
