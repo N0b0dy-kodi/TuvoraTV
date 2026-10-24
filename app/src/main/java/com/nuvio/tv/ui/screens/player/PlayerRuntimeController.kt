@@ -517,7 +517,7 @@ class PlayerRuntimeController(
     internal var mpvPreferredAudioLanguages: List<String> = emptyList()
     internal var currentStreamBingeGroup: String? = navigationArgs.bingeGroup
     // Per-device delay + current stream's behaviorHints.audioDelayMs + the user's tweak on that stream.
-    internal var audioDelayParts: AudioDelayParts = AudioDelayParts().withStream(navigationArgs.audioDelayMs ?: 0)
+    internal var audioDelayParts: AudioDelayParts = AudioDelayParts().withStream(navigationArgs.audioDelayMs ?: 0, navigationArgs.audioDelayLanguage)
     internal var hasAppliedRememberedAudioSelection: Boolean = false
     internal var hasInitializedAudioAmplificationForSession: Boolean = false
     internal var hasInitializedCenterMixForSession: Boolean = false
@@ -560,6 +560,8 @@ class PlayerRuntimeController(
     internal val seekProgressSyncDebounceMs = 700L
     internal val audioDelayUs = AtomicLong(0L)
     internal val subtitleDelayUs = AtomicLong(0L)
+    // Offset for embedded subtitles from the stream audio source; never persisted.
+    internal val streamSubtitleDelayUs = AtomicLong(0L)
     internal var pendingPreviewSeekPosition: Long? = null
     internal var pendingResumeProgress: WatchProgress? = null
     // The resume target of the current playback request; survives the first load consuming
@@ -681,6 +683,25 @@ class PlayerRuntimeController(
         observeStreamBadgeSettings()
         observeDeviceLocalAspectMode()
         observeDeviceLocalTunneledSurfaceFill()
+        observeStreamDelayTrackSelection()
+    }
+
+    // The stream delay hint can be scoped to a language: re-apply it whenever the selected tracks change.
+    private fun observeStreamDelayTrackSelection() {
+        scope.launch {
+            _uiState
+                .map { state ->
+                    val audio = state.audioTracks.getOrNull(state.selectedAudioTrackIndex)
+                    val subtitle = state.subtitleTracks.getOrNull(state.selectedSubtitleTrackIndex)
+                    listOf(
+                        audio != null, audio?.language,
+                        subtitle != null, subtitle?.language,
+                        state.selectedAddonSubtitle != null
+                    )
+                }
+                .distinctUntilChanged()
+                .collect { syncStreamDelayWithSelectedTracks() }
+        }
     }
 
     private fun observeTorrentSettings() {

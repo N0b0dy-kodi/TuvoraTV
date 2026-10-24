@@ -1442,7 +1442,11 @@ class ExternalPlaybackTracker @Inject constructor(
             Log.d(TAG, LogRedaction.text("Saving progress: pos=${positionMs}ms, dur=${effectiveDuration}ms, " +
                 "content=${metadata.contentId}, video=${metadata.videoId}, " +
                 "progressPct=${progress.progressPercentage}, isInProgress=${progress.isInProgress()}"))
-            watchProgressRepository.saveProgress(progress, metadata.profileId)
+            persistProgressOrContinue({ error ->
+                Log.w(TAG, "Watch progress could not be saved", error)
+            }) {
+                watchProgressRepository.saveProgress(progress, metadata.profileId)
+            }
 
             val progressPercent = if (effectiveDuration > 0L) {
                 (positionMs.toFloat() / effectiveDuration.toFloat() * 100f).coerceIn(0f, 100f)
