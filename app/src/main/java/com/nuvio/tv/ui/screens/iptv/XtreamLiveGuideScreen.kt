@@ -207,11 +207,13 @@ fun LiveGuide(
         if (index < 0) return@LaunchedEffect // The overlay projection has not restored it yet.
         channelListState.scrollToItem(index)
         // Let the removed toast and restored lazy item settle before retiring the intent.
-        // The permanent requester survives the intent being cleared.
-        repeat(3) {
-            withFrameNanos { }
-            channelRowRequesters[origin]?.requestFocusOrFalse()
+        // The permanent requester survives the intent being cleared. Keep asking until the row
+        // really takes focus (a slow stick needs more than a few frames); if it never does, the
+        // channel list takes it so focus does not rest on the group pill.
+        val landed = GuideFocusRequestLoop.requestUntilLanded {
+            channelRowRequesters[origin]?.requestFocusOrFalse() == true
         }
+        if (!landed) channelListFocus.requestFocusOrFalse()
         pendingRestoreEntityId = null
     }
 
@@ -367,7 +369,9 @@ fun LiveGuide(
     // F08: the channel list over fullscreen video, and the previous channel for the LAST key.
     var channelListOpen by remember { mutableStateOf(false) }
     val fullscreenAnchor = remember { FocusRequester() }
-    var anchorUsed by remember { mutableStateOf(false) }
+    var browsingOrigin by remember(account.id) { mutableStateOf<String?>(null) }
+    var wasFullscreen by remember(account.id) { mutableStateOf(false) }
+    var restoreAfterFullscreen by remember(account.id) { mutableStateOf(false) }
     // F28: the shared live overlay's own state — the "More" row and the open picker.
     var moreOpen by remember { mutableStateOf(false) }
     var livePanel by remember { mutableStateOf<LivePanel?>(null) }
@@ -376,17 +380,23 @@ fun LiveGuide(
     val livePicture by playbackViewModel.picture.collectAsStateWithLifecycle()
     var aspectLabel by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(aspectLabel) { if (aspectLabel != null) { delay(1_500); aspectLabel = null } }
-    LaunchedEffect(channelListOpen, controlsVisible) {
-        if (fullscreen && (channelListOpen || controlsVisible)) anchorUsed = true
-    }
     LaunchedEffect(fullscreen) {
-        if (fullscreen) return@LaunchedEffect
-        channelListOpen = false
-        // Leaving fullscreen after the channel list: focus was behind the video, give it back to
-        // the guide on the aimed channel (row 1 if that row isn't composed).
-        if (anchorUsed) {
-            anchorUsed = false
-            if (!requestFocusedChannel()) firstChannelFocus.requestFocusOrFalse()
+        if (fullscreen) {
+            browsingOrigin = uiState.focusedChannel?.entityId
+            wasFullscreen = true
+        } else if (wasFullscreen) {
+            wasFullscreen = false
+            channelListOpen = false
+            restoreAfterFullscreen = true
+        }
+    }
+    LaunchedEffect(restoreAfterFullscreen, fullscreen, uiState.channels) {
+        if (restoreAfterFullscreen && !fullscreen && uiState.channels.isNotEmpty()) {
+            pendingRestoreEntityId = GuideFocusRestorePolicy.target(
+                playing = uiState.channels.firstOrNull { it.contentId == playingContentId }?.entityId,
+                origin = browsingOrigin,
+                visibleIds = uiState.channels.map { it.entityId })
+            restoreAfterFullscreen = false
         }
     }
     var zapBack by remember(account.id) { mutableStateOf(LiveZapBack()) }
