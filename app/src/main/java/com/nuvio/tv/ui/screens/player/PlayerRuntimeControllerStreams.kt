@@ -48,7 +48,7 @@ internal fun PlayerRuntimeController.scheduleSourceBadgeApplication() {
         val allNewStreams = newAddons.flatMap { addonName ->
             _uiState.value.sourceAllStreams.filter { it.addonName == addonName }
         }
-        if (allNewStreams.isEmpty()) {
+        if (allNewStreams.isEmpty() || !streamBadgePresentation.hasActiveFilters()) {
             sourceBadgedAddonNames = sourceBadgedAddonNames + newAddons.toSet()
             return@launch
         }
@@ -595,7 +595,7 @@ private fun PlayerRuntimeController.applySelectedStreamState(
  */
 private fun PlayerRuntimeController.applyStreamMetadata(stream: Stream) {
     currentStreamBingeGroup = stream.behaviorHints?.bingeGroup
-    applyStreamAudioDelay(stream.behaviorHints?.audioDelayMs)
+    applyStreamAudioDelay(stream.behaviorHints?.audioDelayMs, stream.behaviorHints?.audioDelayLanguage)
     currentVideoHash = stream.behaviorHints?.videoHash
     currentVideoSize = stream.behaviorHints?.videoSize
     currentAddonName = stream.addonName
@@ -644,7 +644,8 @@ private fun PlayerRuntimeController.persistSelectedStreamForReuse(
             year = year,
             deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
             deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
-            audioDelayMs = stream.behaviorHints?.audioDelayMs
+            audioDelayMs = stream.behaviorHints?.audioDelayMs,
+            audioDelayLanguage = stream.behaviorHints?.audioDelayLanguage
         )
     }
 }
@@ -674,7 +675,8 @@ private fun PlayerRuntimeController.persistTorrentStreamForReuse(stream: Stream)
             year = year,
             deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
             deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
-            audioDelayMs = stream.behaviorHints?.audioDelayMs
+            audioDelayMs = stream.behaviorHints?.audioDelayMs,
+            audioDelayLanguage = stream.behaviorHints?.audioDelayLanguage
         )
     }
 }

@@ -10,6 +10,7 @@ import com.google.gson.GsonBuilder
 import com.nuvio.tv.BuildConfig
 import com.nuvio.tv.domain.model.LocalScraperResult
 import com.nuvio.tv.domain.model.Subtitle
+import com.nuvio.tv.domain.model.toStreamAudioDelayLanguage
 import com.nuvio.tv.domain.model.toStreamAudioDelayMs
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
@@ -1464,7 +1465,9 @@ class PluginRuntime @Inject constructor() {
                     headers = headers,
                     subtitles = parseSubtitles(item["subtitles"]),
                     audioDelayMs = ((item["behaviorHints"] as? Map<*, *>)?.get("audioDelayMs") as? Number)
-                        .toStreamAudioDelayMs()
+                        .toStreamAudioDelayMs(),
+                    audioDelayLanguage = ((item["behaviorHints"] as? Map<*, *>)?.get("audioDelayLanguage") as? String)
+                        .toStreamAudioDelayLanguage()
                 )
             }?.filter { it.url.isNotBlank() } ?: emptyList()
         } catch (e: Exception) {

@@ -51,7 +51,7 @@ internal fun PlayerRuntimeController.attachMpvView(view: MpvSurface?) {
             secondary = _uiState.value.subtitleStyle.secondaryPreferredLanguage
         )
         view.applySubtitleStyle(_uiState.value.subtitleStyle)
-        view.setSubtitleDelayMs(_uiState.value.subtitleDelayMs)
+        view.setSubtitleDelayMs(mpvSubtitleDelayMs(_uiState.value.subtitleDelayMs))
         view.setAudioDelayMs(_uiState.value.audioDelayMs)
         view.applyAspectMode(_uiState.value.aspectMode)
         view.applyVideoZoom(_uiState.value.videoZoom)
@@ -162,7 +162,7 @@ internal fun PlayerRuntimeController.initializeMpvPlayer(
             secondary = _uiState.value.subtitleStyle.secondaryPreferredLanguage
         )
         view.applySubtitleStyle(_uiState.value.subtitleStyle)
-        view.setSubtitleDelayMs(_uiState.value.subtitleDelayMs)
+        view.setSubtitleDelayMs(mpvSubtitleDelayMs(_uiState.value.subtitleDelayMs))
         view.setAudioDelayMs(_uiState.value.audioDelayMs)
         view.applyAspectMode(_uiState.value.aspectMode)
         view.applyVideoZoom(_uiState.value.videoZoom)
@@ -525,6 +525,8 @@ internal fun PlayerRuntimeController.applyPendingMpvSeekIfNeeded(
     if (!canSeekNow) return
 
     view.seekToMs(target)
+    view.setSubtitleDelayMs(mpvSubtitleDelayMs(state.subtitleDelayMs))
+    view.setAudioDelayMs(state.audioDelayMs)
     if (state.pendingSeekPosition != target) {
         _uiState.update { it.copy(pendingSeekPosition = target) }
     }
@@ -578,7 +580,7 @@ internal fun PlayerRuntimeController.seekPlaybackTo(
         mpvView?.let { view ->
             view.seekToMs(positionMs)
             // Keep subtitle delay sticky during FF/RW seeks.
-            view.setSubtitleDelayMs(_uiState.value.subtitleDelayMs)
+            view.setSubtitleDelayMs(mpvSubtitleDelayMs(_uiState.value.subtitleDelayMs))
         }
     } else {
         _exoPlayer?.let { player ->

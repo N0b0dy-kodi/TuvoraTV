@@ -47,7 +47,8 @@ internal data class PlayerNavigationArgs(
     /** The replayed programme's bounds, for the seek ceiling. Null unless [isCatchUp]. */
     val catchUpStartMs: Long?,
     val catchUpEndMs: Long?,
-    val audioDelayMs: Int? = null
+    val audioDelayMs: Int? = null,
+    val audioDelayLanguage: String? = null
 ) {
     val torrentTrackers: List<String>
         get() {
@@ -109,7 +110,8 @@ internal data class PlayerNavigationArgs(
                 isCatchUp = savedStateHandle.get<String>("isCatchUp")?.toBooleanStrictOrNull() == true,
                 catchUpStartMs = savedStateHandle.get<String>("catchUpStartMs")?.toLongOrNull(),
                 catchUpEndMs = savedStateHandle.get<String>("catchUpEndMs")?.toLongOrNull(),
-                audioDelayMs = savedStateHandle.get<String>("audioDelayMs")?.toIntOrNull()
+                audioDelayMs = savedStateHandle.get<String>("audioDelayMs")?.toIntOrNull(),
+                audioDelayLanguage = decodedOrNull("audioDelayLanguage")
             )
         }
     }

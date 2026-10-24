@@ -239,6 +239,12 @@ class StreamScreenViewModel @Inject constructor(
         if (streamBadgePresentationJob?.isActive == true) return
 
         streamBadgePresentationJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            // Nothing can match without active filters, so skip rebuilding the
+            // stream lists for every chunk.
+            if (!streamBadgePresentation.hasActiveFilters()) {
+                badgedAddonNames = badgedAddonNames + newGroups.map { it.addonName }.toSet()
+                return@launch
+            }
             var pending = newGroups
             while (pending.isNotEmpty()) {
                 val allNewStreams = pending.flatMap { it.streams }
@@ -516,7 +522,8 @@ class StreamScreenViewModel @Inject constructor(
                                 fileIdx = cached.fileIdx,
                                 sources = cached.sources,
                                 contentLanguage = cached.contentLanguage ?: contentLanguage,
-                                audioDelayMs = cached.audioDelayMs
+                                audioDelayMs = cached.audioDelayMs,
+                                audioDelayLanguage = cached.audioDelayLanguage
                             ),
                             showDirectAutoPlayOverlay = showOverlay || it.showDirectAutoPlayOverlay,
                             isDirectAutoPlayFlow = showOverlay || it.isDirectAutoPlayFlow
@@ -1578,7 +1585,8 @@ class StreamScreenViewModel @Inject constructor(
             fileIdx = stream.getEffectiveFileIdx(),
             sources = stream.sources,
             contentLanguage = contentLanguage,
-            audioDelayMs = stream.behaviorHints?.audioDelayMs
+            audioDelayMs = stream.behaviorHints?.audioDelayMs,
+            audioDelayLanguage = stream.behaviorHints?.audioDelayLanguage
         )
 
         val url = playbackInfo.url
@@ -1597,7 +1605,8 @@ class StreamScreenViewModel @Inject constructor(
                     year = year,
                     deviceSourceKind = stream.deviceSourceKind ?: "unmanaged",
                     deviceSourceId = com.nuvio.tv.core.sources.DeviceSources.sourceId(stream.deviceSourceKind,stream.deviceSourceRef),
-                    audioDelayMs = playbackInfo.audioDelayMs
+                    audioDelayMs = playbackInfo.audioDelayMs,
+                    audioDelayLanguage = playbackInfo.audioDelayLanguage
                 )
             }
         }
@@ -2106,6 +2115,7 @@ data class StreamPlaybackInfo(
     val sources: List<String>? = null,
     val contentLanguage: String? = null,
     val audioDelayMs: Int? = null,
+    val audioDelayLanguage: String? = null,
     val isServerStream: Boolean = false
 )
 
