@@ -102,6 +102,8 @@ internal fun CleanLivePlayerScreen(
     // Starts shown so the viewer sees what's playing, then hides on the shared delay.
     var controlsVisible by remember { mutableStateOf(true) }
     var revealTick by remember { mutableIntStateOf(0) }
+    // The controls on screen came from a zap and nothing else has touched them since.
+    var zapReveal by remember { mutableStateOf(false) }
     var moreOpen by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf<LivePanel?>(null) }
     var aspectLabel by remember { mutableStateOf<String?>(null) }
@@ -117,7 +119,9 @@ internal fun CleanLivePlayerScreen(
     }
 
     fun showControls() { controlsVisible = true; revealTick++ }
-    fun hideControls() { controlsVisible = false; moreOpen = false }
+    fun hideControls() { controlsVisible = false; zapReveal = false; moreOpen = false }
+    val tuning = uiState.spinnerVisible || uiState.bottomStatusCode == LivePlaybackUiStatusCode.RESOLVING ||
+        uiState.bottomStatusCode == LivePlaybackUiStatusCode.STARTING
 
     // T10: an error or a reconnect brings the controls (and the reason) back by itself.
     val reconnecting = uiState.bottomStatusCode == LivePlaybackUiStatusCode.RECONNECTING ||
@@ -125,8 +129,8 @@ internal fun CleanLivePlayerScreen(
     LaunchedEffect(failed, reconnecting) {
         if (LiveControlsPolicy.revealForTrouble(failed, reconnecting, controlsVisible, panel != null)) showControls()
     }
-    LaunchedEffect(revealTick, controlsVisible, paused, failed, panel) {
-        if (LiveControlsPolicy.mayAutoHide(controlsVisible, paused, failed, panelOpen = panel != null)) {
+    LaunchedEffect(revealTick, controlsVisible, paused, failed, panel, tuning) {
+        if (LiveControlsPolicy.mayAutoHide(controlsVisible, paused, failed, panelOpen = panel != null, tuning = tuning)) {
             delay(PlayerControlsTiming.AUTO_HIDE_MS)
             hideControls()
         }
@@ -165,25 +169,31 @@ internal fun CleanLivePlayerScreen(
                     paused = paused,
                     panelOpen = panel != null,
                     isRepeat = event.nativeKeyEvent.repeatCount > 0,
+                    zapReveal = zapReveal,
                 )
                 when (action) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
                     LiveControlsPolicy.KeyAction.PASS_AND_KEEP_ALIVE -> {
-                        if (event.type == KeyEventType.KeyDown) revealTick++
+                        if (event.type == KeyEventType.KeyDown) { revealTick++; zapReveal = false }
                         return@onPreviewKeyEvent false
                     }
                     LiveControlsPolicy.KeyAction.CONSUME -> Unit
-                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> showControls()
+                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> { showControls(); zapReveal = false }
                     LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> {
                         if (uiState.controlsEnabled) { if (paused) onResume() else onPause() }
-                        showControls()
+                        showControls(); zapReveal = false
                     }
                     // Zapping is only dispatched while the session accepts controls; disabled keys
                     // fall through rather than being swallowed silently.
-                    LiveControlsPolicy.KeyAction.ZAP_PREVIOUS ->
-                        if (uiState.controlsEnabled) onZapPrevious() else return@onPreviewKeyEvent false
-                    LiveControlsPolicy.KeyAction.ZAP_NEXT ->
-                        if (uiState.controlsEnabled) onZapNext() else return@onPreviewKeyEvent false
+                    // The overlay names the channel being zapped to, and stays for the whole zap.
+                    LiveControlsPolicy.KeyAction.ZAP_PREVIOUS -> {
+                        if (!uiState.controlsEnabled) return@onPreviewKeyEvent false
+                        onZapPrevious(); showControls(); zapReveal = true
+                    }
+                    LiveControlsPolicy.KeyAction.ZAP_NEXT -> {
+                        if (!uiState.controlsEnabled) return@onPreviewKeyEvent false
+                        onZapNext(); showControls(); zapReveal = true
+                    }
                     // No lineup history or hideable channel identity on this destination.
                     LiveControlsPolicy.KeyAction.ZAP_BACK,
                     LiveControlsPolicy.KeyAction.OPEN_CHANNEL_LIST,

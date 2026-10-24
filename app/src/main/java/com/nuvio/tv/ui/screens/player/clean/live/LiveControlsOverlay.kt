@@ -61,10 +61,14 @@ import com.nuvio.tv.ui.components.player.rememberRawSvgPainter
 import com.nuvio.tv.ui.theme.NuvioMotion
 import com.nuvio.tv.ui.theme.NuvioTheme
 
+private const val BLANK_LINE = "\u00A0"
+
 /** What the live overlay names: the channel (the live "title") and its programme. */
 internal data class LiveOverlayInfo(
     val channelName: String,
     val logoUrl: String? = null,
+    /** Keep the logo's place even for a channel without one, so zapping doesn't shift the name. */
+    val reserveLogoSlot: Boolean = false,
     /** A secondary line under the name when there is no programme (station, competition). */
     val subtitle: String? = null,
     val nowTitle: String? = null,
@@ -144,6 +148,8 @@ internal fun BoxScope.LiveControlsOverlay(
                         contentDescription = null,
                         modifier = Modifier.size(48.dp).clip(RoundedCornerShape(NuvioTheme.radii.sm)),
                     )
+                } else if (info.reserveLogoSlot) {
+                    Spacer(Modifier.size(48.dp))
                 }
                 Text(
                     text = info.channelName,
@@ -155,23 +161,24 @@ internal fun BoxScope.LiveControlsOverlay(
                 )
                 LiveStatusBadge(info.status)
             }
+            // Both lines always take their place (a non-breaking space when empty): the aimed
+            // channel changes on every zap press, and a line that comes and goes moves the name.
             val programme = info.nowTitle?.takeIf { it.isNotBlank() }
-            if (programme != null) {
-                Text(
-                    text = programme,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.9f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                info.subtitle?.takeIf { it.isNotBlank() }?.let {
-                    Text(text = it, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.9f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            info.nextLine?.let {
-                Text(text = it, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.68f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+                ?: info.subtitle?.takeIf { it.isNotBlank() }
+            Text(
+                text = programme ?: BLANK_LINE,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White.copy(alpha = 0.9f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = info.nextLine ?: BLANK_LINE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.68f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (info.status == LiveControlsPolicy.Status.FAILED && info.errorText != null) {
                 Text(text = info.errorText, style = MaterialTheme.typography.bodyMedium, color = NuvioTheme.colors.Error, maxLines = 2)
             }

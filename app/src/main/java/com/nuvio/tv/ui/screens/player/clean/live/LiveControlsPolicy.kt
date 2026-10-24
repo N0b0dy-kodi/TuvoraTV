@@ -50,6 +50,13 @@ internal object LiveControlsPolicy {
         panelOpen: Boolean,
         /** A held key's auto-repeat: never toggles pause twice. */
         isRepeat: Boolean = false,
+        hasLineup: Boolean = false,
+        /**
+         * The controls on screen were brought up by a zap and nothing else has touched them since:
+         * UP/DOWN keep zapping instead of reaching the buttons, whose DOWN hides the controls —
+         * that hid the channel name mid-zap and left only a spinner.
+         */
+        zapReveal: Boolean = false,
     ): KeyAction {
         if (panelOpen) return KeyAction.PASS
         val ours = key in directional || key in media || key in channelKeys || key == Key.Menu
@@ -66,6 +73,13 @@ internal object LiveControlsPolicy {
                 Key.ChannelDown -> KeyAction.ZAP_PREVIOUS
                 else -> KeyAction.ZAP_BACK
             }
+        }
+        if (key == Key.DirectionLeft && hasLineup && !controlsVisible) {
+            return if (isKeyDown && !isRepeat) KeyAction.OPEN_CHANNEL_LIST else KeyAction.CONSUME
+        }
+        if (controlsVisible && zapReveal && (key == Key.DirectionUp || key == Key.DirectionDown)) {
+            if (!isKeyDown) return KeyAction.CONSUME
+            return if (key == Key.DirectionUp) KeyAction.ZAP_PREVIOUS else KeyAction.ZAP_NEXT
         }
         if (controlsVisible) {
             // The buttons own the D-pad now; every press keeps them up. MENU is not a control key.
@@ -90,8 +104,14 @@ internal object LiveControlsPolicy {
         else -> BackAction.EXIT
     }
 
-    fun mayAutoHide(controlsVisible: Boolean, paused: Boolean, failed: Boolean, panelOpen: Boolean): Boolean =
-        controlsVisible && !paused && !failed && !panelOpen
+    /** Never while a channel is still tuning: its name and "Tuning" are what the viewer is waiting on. */
+    fun mayAutoHide(
+        controlsVisible: Boolean,
+        paused: Boolean,
+        failed: Boolean,
+        panelOpen: Boolean,
+        tuning: Boolean = false,
+    ): Boolean = controlsVisible && !paused && !failed && !panelOpen && !tuning
 
     /**
      * T10 (W2 device pass): a failed tune (or a reconnect) on fullscreen live left the picture black
@@ -126,6 +146,16 @@ internal object LiveControlsPolicy {
         val channelList: Boolean,
         val favourite: Boolean,
     )
+
+    /**
+     * Zapping retunes every press, and each stream reports its own tracks a moment later, so the
+     * subtitle/audio buttons would pop in and out and shove the row around under the viewer's
+     * thumb. While tuning, keep what the last settled stream offered; everything else (Retry above
+     * all) follows reality.
+     */
+    fun holdWhileTuning(settled: Buttons?, current: Buttons, tuning: Boolean): Buttons =
+        if (!tuning || settled == null) current
+        else current.copy(subtitles = settled.subtitles, audio = settled.audio)
 
     /**
      * Which controls show. Retry only on an error. Subtitles when the stream has any; audio when

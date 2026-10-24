@@ -146,4 +146,69 @@ class LiveControlsPolicyTest {
         assertEquals("a panel keeps its focus", false, LiveControlsPolicy.revealForTrouble(failed = true, reconnecting = false, controlsVisible = false, panelOpen = true))
         assertEquals("healthy -> nothing", false, LiveControlsPolicy.revealForTrouble(failed = false, reconnecting = false, controlsVisible = false, panelOpen = false))
     }
+
+    // Zapping: the controls must stay readable while the aimed channel changes under them.
+
+    private val settled = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 2, audioTracks = 3, hasLineup = true)
+    private val bare = LiveControlsPolicy.buttons(failed = false, subtitleTracks = 0, audioTracks = 0, hasLineup = true)
+
+    @Test
+    fun `while tuning the track buttons keep what the last stream offered`() {
+        val held = LiveControlsPolicy.holdWhileTuning(settled = settled, current = bare, tuning = true)
+        assertEquals("subtitles", true, held.subtitles)
+        assertEquals("audio", true, held.audio)
+    }
+
+    @Test
+    fun `once tuned the buttons follow the new stream`() {
+        assertEquals(bare, LiveControlsPolicy.holdWhileTuning(settled = settled, current = bare, tuning = false))
+    }
+
+    @Test
+    fun `the first tune has nothing to hold`() {
+        assertEquals(bare, LiveControlsPolicy.holdWhileTuning(settled = null, current = bare, tuning = true))
+    }
+
+    @Test
+    fun `retry follows reality even while tuning`() {
+        val failed = LiveControlsPolicy.buttons(failed = true, subtitleTracks = 0, audioTracks = 0, hasLineup = true)
+        assertEquals("retry", true, LiveControlsPolicy.holdWhileTuning(settled, failed, tuning = true).retry)
+        assertEquals("no retry", false, LiveControlsPolicy.holdWhileTuning(settled, bare, tuning = true).retry)
+    }
+
+    // Zap in progress: the controls the zap brought up must not be hidden by the next zap press.
+
+    private fun zapKey(key: Key, down: Boolean = true) =
+        LiveControlsPolicy.keyAction(key, down, controlsVisible = true, paused = false, panelOpen = false, zapReveal = true)
+
+    @Test
+    fun `DOWN and UP keep zapping while the zap's controls are up`() {
+        assertEquals("down", KeyAction.ZAP_NEXT, zapKey(Key.DirectionDown))
+        assertEquals("up", KeyAction.ZAP_PREVIOUS, zapKey(Key.DirectionUp))
+    }
+
+    @Test
+    fun `the key-up of a zap press is consumed`() {
+        assertEquals(KeyAction.CONSUME, zapKey(Key.DirectionDown, down = false))
+    }
+
+    @Test
+    fun `any other key hands the D-pad to the controls`() {
+        assertEquals("left", KeyAction.PASS_AND_KEEP_ALIVE, zapKey(Key.DirectionLeft))
+        assertEquals("ok", KeyAction.PASS_AND_KEEP_ALIVE, zapKey(Key.DirectionCenter))
+    }
+
+    @Test
+    fun `without a zap in progress DOWN still goes to the buttons, which hide the controls`() {
+        assertEquals(
+            KeyAction.PASS_AND_KEEP_ALIVE,
+            LiveControlsPolicy.keyAction(Key.DirectionDown, true, controlsVisible = true, paused = false, panelOpen = false),
+        )
+    }
+
+    @Test
+    fun `controls stay up while a channel is still tuning`() {
+        assertFalse(LiveControlsPolicy.mayAutoHide(controlsVisible = true, paused = false, failed = false, panelOpen = false, tuning = true))
+        assertTrue(LiveControlsPolicy.mayAutoHide(controlsVisible = true, paused = false, failed = false, panelOpen = false, tuning = false))
+    }
 }

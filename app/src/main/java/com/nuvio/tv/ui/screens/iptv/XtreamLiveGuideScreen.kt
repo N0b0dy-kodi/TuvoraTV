@@ -401,6 +401,8 @@ fun LiveGuide(
     }
     var zapBack by remember(account.id) { mutableStateOf(LiveZapBack()) }
     LaunchedEffect(playingContentId) { playingContentId?.let { zapBack = zapBack.onSettled(it) } }
+    // The controls on screen came from a zap and nothing else has touched them since (LiveControlsPolicy).
+    var zapReveal by remember { mutableStateOf(false) }
     fun showControls() { controlsVisible = true; controlsTick++ }
     fun togglePause() {
         if (playbackUi?.isPaused == true) playbackViewModel.requestResume()
@@ -409,9 +411,13 @@ fun LiveGuide(
     }
     val liveChrome = playbackUi?.let { CleanLivePlayerUiPolicy.present(it) }
     val liveFailed = playbackUi?.bottomErrorCode != null || playbackState is CleanLiveGuidePlaybackState.Rejected
-    val livePanelOpen = channelListOpen || livePanel != null || uiState.hideNotice != null || uiState.favoriteNotice != null
+    val livePanelOpen = channelListOpen || livePanel != null || channelMenuAsk != null || layoutPickerOpen || uiState.hideNotice != null || uiState.favoriteNotice != null
+    // A zap retunes: the aimed channel isn't the playing one yet, or the spinner is up.
+    val liveTuning = playbackUi?.spinnerVisible == true ||
+        (uiState.focusedChannel?.let { it.contentId != playingContentId } == true)
     fun hideControls() {
         controlsVisible = false
+        zapReveal = false
         moreOpen = false
         // The buttons leave composition: focus waits behind the video for the next key.
         fullscreenAnchor.requestFocusOrFalse()
@@ -425,8 +431,8 @@ fun LiveGuide(
         }
     }
     // F28: one auto-hide delay shared with VOD; never while paused, on an error, or with a panel open.
-    LaunchedEffect(fullscreen, controlsTick, playbackUi?.isPaused, liveFailed, livePanelOpen) {
-        if (fullscreen && LiveControlsPolicy.mayAutoHide(controlsVisible, playbackUi?.isPaused == true, liveFailed, livePanelOpen)) {
+    LaunchedEffect(fullscreen, controlsTick, playbackUi?.isPaused, liveFailed, livePanelOpen, liveTuning) {
+        if (fullscreen && LiveControlsPolicy.mayAutoHide(controlsVisible, playbackUi?.isPaused == true, liveFailed, livePanelOpen, tuning = liveTuning)) {
             delay(PlayerControlsTiming.AUTO_HIDE_MS)
             hideControls()
         }
@@ -435,7 +441,7 @@ fun LiveGuide(
     LaunchedEffect(fullscreen, controlsVisible, livePanelOpen) {
         if (fullscreen && controlsVisible && !livePanelOpen) controlsPrimaryFocus.requestFocusOrFalse()
     }
-    LaunchedEffect(fullscreen) { if (!fullscreen) { controlsVisible = false; moreOpen = false; livePanel = null } }
+    LaunchedEffect(fullscreen) { if (!fullscreen) { controlsVisible = false; zapReveal = false; moreOpen = false; livePanel = null } }
     // F28 BACK: the channel list and the pickers answer it themselves; then hide the controls; then
     // back to the guide.
     BackHandler(enabled = fullscreen) {
@@ -466,32 +472,36 @@ fun LiveGuide(
                         paused = playbackUi?.isPaused == true,
                         panelOpen = livePanelOpen,
                         isRepeat = event.nativeKeyEvent.repeatCount > 0,
+                        hasLineup = true,
+                        zapReveal = zapReveal,
                     )
                 ) {
                     LiveControlsPolicy.KeyAction.PASS -> return@onPreviewKeyEvent false
                     // The buttons own the D-pad while shown; each press keeps them up.
                     LiveControlsPolicy.KeyAction.PASS_AND_KEEP_ALIVE -> {
-                        if (event.type == KeyEventType.KeyDown) controlsTick++
+                        if (event.type == KeyEventType.KeyDown) { controlsTick++; zapReveal = false }
                         return@onPreviewKeyEvent false
                     }
                     // The KeyUp half of a handled key: consumed so the locked row never clicks.
                     LiveControlsPolicy.KeyAction.CONSUME -> Unit
-                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> showControls()
-                    LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> togglePause()
-                    // MENU on the aimed channel hides it (personalization overlay; syncs to web + other
-                    // devices) and confirms with a notice + Undo (UX36/UX73).
-                    LiveControlsPolicy.KeyAction.HIDE_CHANNEL -> uiState.focusedChannel?.let { viewModel.hideChannel(it) }
+                    LiveControlsPolicy.KeyAction.SHOW_CONTROLS -> { showControls(); zapReveal = false }
+                    LiveControlsPolicy.KeyAction.TOGGLE_PAUSE -> { togglePause(); zapReveal = false }
+                    // Menu opens labeled actions; entering it never changes the channel lineup.
+                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_MENU -> uiState.focusedChannel?.let { channelMenuAsk = it to viewModel.channelMenu(it) }
+                    LiveControlsPolicy.KeyAction.OPEN_CHANNEL_LIST -> { channelListOpen = true; controlsVisible = false; moreOpen = false }
                     // UP/DOWN (controls hidden) and CH+/CH- change channel; each press names the AIMED
                     // channel without stealing focus into the controls.
                     LiveControlsPolicy.KeyAction.ZAP_PREVIOUS -> {
                         viewModel.moveChannelFocus(LiveZapDirection.PREVIOUS)
                             ?.let(playbackViewModel::requestSettledTune)
                         if (!controlsVisible) showControls() else controlsTick++
+                        zapReveal = true
                     }
                     LiveControlsPolicy.KeyAction.ZAP_NEXT -> {
                         viewModel.moveChannelFocus(LiveZapDirection.NEXT)
                             ?.let(playbackViewModel::requestSettledTune)
                         if (!controlsVisible) showControls() else controlsTick++
+                        zapReveal = true
                     }
                     // F08: back to the channel watched before (LAST/RECALL), if it is in this lineup.
                     LiveControlsPolicy.KeyAction.ZAP_BACK -> {
@@ -500,6 +510,7 @@ fun LiveGuide(
                             ?.let(viewModel::focusChannel)
                             ?.let(playbackViewModel::requestTune)
                         if (!controlsVisible) showControls() else controlsTick++
+                        zapReveal = true
                     }
                 }
                 true
@@ -780,17 +791,27 @@ fun LiveGuide(
                 // Same message the docked preview shows; without it a failed tune read "Live".
                 val errorText = playbackErrorText(playbackState, playbackUi?.bottomErrorCode)
                 val status = playbackUi?.bottomStatusCode
+                val tuningNow = liveTuning
+                val currentButtons = LiveControlsPolicy.buttons(
+                    failed = liveChrome?.retryEnabled == true,
+                    subtitleTracks = catalog?.subtitles?.size ?: 0,
+                    audioTracks = catalog?.audio?.size ?: 0,
+                    hasLineup = true,
+                )
+                // Zapping retunes every press: hold the track buttons steady until the stream settles.
+                var settledButtons by remember { mutableStateOf<LiveControlsPolicy.Buttons?>(null) }
+                if (!tuningNow) settledButtons = currentButtons
                 LiveControlsOverlay(
                     info = LiveOverlayInfo(
                         channelName = overlayChannel?.name.orEmpty(),
                         logoUrl = overlayChannel?.logo,
+                        reserveLogoSlot = true,
                         nowTitle = overlayEpg?.now?.let { "${timeRange(it)}  ${it.title}" },
                         nowStartMs = overlayEpg?.now?.startMs,
                         nowEndMs = overlayEpg?.now?.endMs,
                         nextLine = overlayEpg?.next?.let { stringResource(R.string.iptv_guide_next_programme, timeRange(it), it.title) },
                         status = LiveControlsPolicy.status(
-                            tuning = playbackUi?.spinnerVisible == true ||
-                                (overlayChannel != null && overlayChannel.contentId != playingContentId),
+                            tuning = tuningNow,
                             reconnecting = status == LivePlaybackUiStatusCode.RECONNECTING ||
                                 status == LivePlaybackUiStatusCode.RECOVERING,
                             paused = playbackUi?.isPaused == true,
@@ -799,12 +820,7 @@ fun LiveGuide(
                         errorText = errorText,
                     ),
                     nowMs = nowMs,
-                    buttons = LiveControlsPolicy.buttons(
-                        failed = liveChrome?.retryEnabled == true,
-                        subtitleTracks = catalog?.subtitles?.size ?: 0,
-                        audioTracks = catalog?.audio?.size ?: 0,
-                        hasLineup = true,
-                    ),
+                    buttons = LiveControlsPolicy.holdWhileTuning(settledButtons, currentButtons, tuningNow),
                     paused = playbackUi?.isPaused == true,
                     favourite = overlayChannel?.contentId?.let { it in favoriteIds } == true,
                     moreOpen = moreOpen,
