@@ -213,6 +213,16 @@ internal fun PlayerRuntimeController.initializePlayer(
             val playerSettings = playerSettingsDataStore.playerSettings.first()
             currentPlayerSettingsForReport = playerSettings
             rememberAudioDelayPerDeviceEnabled = playerSettings.rememberAudioDelayPerDevice
+            val usbRoute = AudioOutputRouteDetector.detect(context)
+            tunnelingBlockedByUsbAudio = playerSettings.tunnelingEnabled &&
+                AudioOutputRouteDetector.isUsbMediaOutput(context, usbRoute)
+            if (tunnelingBlockedByUsbAudio) {
+                Log.i(
+                    PlayerRuntimeController.TAG,
+                    "Tunneled playback skipped: media audio goes to USB (route=${usbRoute?.key})"
+                )
+            }
+            val tunnelingActive = playerSettings.tunnelingEnabled && !tunnelingBlockedByUsbAudio
             if (rememberAudioDelayPerDeviceEnabled) {
                 registerAudioDelayRouteCallback()
                 applyStoredAudioDelayForCurrentRouteIfEnabled()
@@ -285,7 +295,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     aspectMode = if (seriesPictureApplied) it.aspectMode else deviceAspectMode,
                     tunneledSurfaceFill = tunneledSurfaceFill,
                     playbackIssueReportsEnabled = playerSettings.playbackIssueReportsEnabled,
-                    tunnelingEnabled = playerSettings.tunnelingEnabled &&
+                    tunnelingEnabled = tunnelingActive &&
                             effectiveInternalPlayerEngine != InternalPlayerEngine.MVP_PLAYER
                 )
             }
@@ -746,7 +756,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 }
             }.apply {
                 setParameters(buildUponParameters().setAllowInvalidateSelectionsOnRendererCapabilitiesChange(true))
-                if (playerSettings.tunnelingEnabled && !safeAudioModeEnabled) {
+                if (tunnelingActive && !safeAudioModeEnabled) {
                     setParameters(buildUponParameters().setTunnelingEnabled(true))
                 } else if (safeAudioModeEnabled) {
                     setParameters(buildUponParameters().setTunnelingEnabled(false).setConstrainAudioChannelCountToDeviceCapabilities(true))
@@ -834,6 +844,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             val codecSelector = createDolbyVisionFallbackCodecSelector(
                 convertToDv81Active = convertToDv81Active
             )
+            // Warm the software-decoder name set off main for the VIDEO_DECODER log line.
+            scope.launch(Dispatchers.Default) { softwareOnlyDecoderNames }
             val vc1SoftwareFallbackActive = vc1SoftwarePreferredStreamUrls.contains(url)
             isVc1SoftwareFallbackActiveForCurrentPlayback = vc1SoftwareFallbackActive
             // PCM-fallback rebuilds must ALSO drop the AC3-transcode path: the force-PCM sink
@@ -877,6 +889,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 forceOpticalPassthrough = isForcePassthroughActive,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
                 initialForcePcm = hasTriedAudioPcmFallback,
+                mapDv7ToHevc = mapDv7ToHevcEnabled,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
                 onFfmpegAudioRendererChanged = { renderer ->
                     ffmpegAudioRenderer = renderer
@@ -959,6 +972,12 @@ internal fun PlayerRuntimeController.initializePlayer(
 
             disposeExoPlayerBeforeRebuild()
             delay(PLAYER_REBUILD_SETTLE_DELAY_MS)
+            // Left the foreground while preparing: build on return instead of claiming a decoder
+            // the foreground app may need. The resume rebuild uses currentStreamUrl.
+            if (isInBackground && url == currentStreamUrl && !isLiveFeed()) {
+                pendingBackgroundCrashRecovery = true
+                return@launch
+            }
 
             _exoPlayer = if (useLibass) {
                 val playerDataSourceFactory = PlayerPlaybackNetworking.createDataSourceFactory(context, headers)
@@ -1025,7 +1044,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                         "playbackSpeed=${_uiState.value.playbackSpeed} " +
                         "resumePositionMs=$initialResumePosition mime=${currentStreamMimeType ?: "unknown"} " +
                         "bufferEngine=${playerSettings.bufferEngineEnabled} parallel=${mediaSourceFactory.useParallelConnections} " +
-                        "vodCache=${mediaSourceFactory.vodCacheEnabled} tunneling=${playerSettings.tunnelingEnabled}"
+                        "vodCache=${mediaSourceFactory.vodCacheEnabled} tunneling=$tunnelingActive"
                 )
                 val initialMediaSource = mediaSourceFactory.createMediaSource(
                     context = context,
@@ -1051,7 +1070,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                     phase = "starting_stream",
                     message = context.getString(R.string.player_loading_starting)
                 )
-                val isTunneledPlayback = playerSettings.tunnelingEnabled
+                val isTunneledPlayback = tunnelingActive
                 // Hold playWhenReady=false through prepare() so audio does not race ahead
                 // while the video decoder is still opening. The first STATE_READY primes the
                 // pipeline (ColdStartPrime); synchronized play() begins in onRenderedFirstFrame().
@@ -1485,39 +1504,11 @@ internal fun PlayerRuntimeController.initializePlayer(
                         // audio so video keeps playing — instead of surfacing the fatal error
                         // screen. Video decode failures never enter this ladder (mime-gated).
                         if (error.isAudioTrackFailure() || error.isAudioDecoderFailure()) {
-                            if (!isSafeAudioModeActiveForCurrentPlayback) {
-                                safeAudioForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!hasTriedAudioPcmFallback) {
-                                hasTriedAudioPcmFallback = true
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!isAudioDisabledForCurrentPlayback) {
-                                audioDisabledForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithAudioDisabled(currentPosition)
-                                return
-                            }
+                            if (tryNextAudioFallbackStep(currentPosition)) return
                         }
 
                         if (error.isStuckPlayingNoProgress()) {
-                            if (!isSafeAudioModeActiveForCurrentPlayback) {
-                                safeAudioForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!hasTriedAudioPcmFallback) {
-                                hasTriedAudioPcmFallback = true
-                                retryCurrentStreamWithSafeAudioFallback(currentPosition)
-                                return
-                            }
-                            if (!isAudioDisabledForCurrentPlayback) {
-                                audioDisabledForcedStreamUrls.add(currentStreamUrl)
-                                retryCurrentStreamWithAudioDisabled(currentPosition)
-                                return
-                            }
+                            if (tryNextAudioFallbackStep(currentPosition)) return
                         }
 
                         val timeoutError = error.findCause<SocketTimeoutException>()
@@ -1667,7 +1658,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                         )
                         Log.i(
                             PlayerRuntimeController.TAG,
-                            "VIDEO_DECODER: name=$decoderName initMs=$initializationDurationMs host=${currentStreamUrl.safeHost()}"
+                            "VIDEO_DECODER: name=$decoderName " +
+                                "software=${isSoftwareVideoDecoderName(decoderName, softwareOnlyDecoderNames)} " +
+                                "initMs=$initializationDurationMs host=${currentStreamUrl.safeHost()}"
                         )
                     }
 
@@ -2181,9 +2174,55 @@ private class SubtitleOffsetRenderersFactory(
     private val forceOpticalPassthrough: Boolean,
     private val playbackSpeedProvider: () -> Float,
     private val initialForcePcm: Boolean = false,
+    private val mapDv7ToHevc: Boolean = false,
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit
 ) : DefaultRenderersFactory(context) {
+
+    /**
+     * Swaps the platform video renderer for [HardwareFirstVideoRenderer] so decoder fallback never
+     * lands a 4K H.264/HEVC stream on Android's software decoder while the hardware can take it
+     * (upstream 17af03251 + 5386e958a).
+     */
+    override fun buildVideoRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        eventHandler: Handler,
+        eventListener: VideoRendererEventListener,
+        allowedVideoJoiningTimeMs: Long,
+        out: ArrayList<Renderer>
+    ) {
+        val built = ArrayList<Renderer>()
+        super.buildVideoRenderers(
+            context,
+            extensionRendererMode,
+            mediaCodecSelector,
+            enableDecoderFallback,
+            eventHandler,
+            eventListener,
+            allowedVideoJoiningTimeMs,
+            built
+        )
+        // Same settings as the platform renderer it replaces; the factory's own DV7 setting only reaches that one.
+        for (renderer in built) {
+            if (renderer::class.java == MediaCodecVideoRenderer::class.java) {
+                val builder = MediaCodecVideoRenderer.Builder(context)
+                    .setCodecAdapterFactory(getCodecAdapterFactory())
+                    .setMediaCodecSelector(mediaCodecSelector)
+                    .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
+                    .setEnableDecoderFallback(enableDecoderFallback)
+                    .setEventHandler(eventHandler)
+                    .setEventListener(eventListener)
+                    .setMaxDroppedFramesToNotify(MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)
+                    .setMapDV7ToHevc(mapDv7ToHevc)
+                out.add(HardwareFirstVideoRenderer(context, builder))
+            } else {
+                out.add(renderer)
+            }
+        }
+    }
 
     override fun buildAudioSink(
         context: Context,

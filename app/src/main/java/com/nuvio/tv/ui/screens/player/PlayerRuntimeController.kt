@@ -523,6 +523,8 @@ class PlayerRuntimeController(
     internal var hasInitializedCenterMixForSession: Boolean = false
     internal var rememberAudioDelayPerDeviceEnabled: Boolean = false
     internal var currentAudioOutputRoute: AudioOutputRoute? = null
+    /** USB audio has no hardware A/V sync output, so tunneled playback is skipped while it plays. */
+    internal var tunnelingBlockedByUsbAudio: Boolean = false
     internal var audioOutputRouteCallback: AudioDeviceCallback? = null
 
     internal var lastBufferLogTimeMs: Long = 0L
@@ -585,6 +587,8 @@ class PlayerRuntimeController(
     internal var hasRetriedCurrentStreamAfterMediaPeriodHolderCrash: Boolean = false
     internal var timeoutRecoveryAttempts: Int = 0
     internal var errorRetryCount: Int = 0
+    /** Where the last libmpv VOD auto-retry resumed; stable playback past it earns the retries back. */
+    internal var mpvVodRetryResumeMs: Long = 0L
     internal var consecutiveAutoPlayCount: Int = 0
     internal var errorRetryJob: Job? = null
     internal var stableProgressResetJob: Job? = null

@@ -24,6 +24,7 @@ internal class MpvPropertyShadow(
     @Volatile var obsPaused = true
     @Volatile var obsPausedForCache = false
     @Volatile var obsCoreIdle = false
+    @Volatile var obsEofReached = false
     @Volatile var obsTimePosMs = 0L
     @Volatile var obsDurationMs = 0L
     @Volatile var obsVid: String? = null
@@ -48,6 +49,7 @@ internal class MpvPropertyShadow(
         obsPaused = true
         obsPausedForCache = false
         obsCoreIdle = false
+        obsEofReached = false
         obsTimePosMs = 0L
         obsDurationMs = 0L
         obsVid = null
@@ -71,6 +73,7 @@ internal class MpvPropertyShadow(
             "pause" -> obsPaused = true
             "paused-for-cache" -> obsPausedForCache = false
             "core-idle" -> obsCoreIdle = false
+            "eof-reached" -> obsEofReached = false
             "time-pos" -> obsTimePosMs = 0L
             "duration" -> obsDurationMs = 0L
             "vid" -> obsVid = null
@@ -103,6 +106,7 @@ internal class MpvPropertyShadow(
             "pause" -> obsPaused = value
             "paused-for-cache" -> obsPausedForCache = value
             "core-idle" -> obsCoreIdle = value
+            "eof-reached" -> obsEofReached = value
         }
     }
 

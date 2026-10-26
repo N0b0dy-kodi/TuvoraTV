@@ -218,6 +218,10 @@ class PlayerViewModel @Inject constructor(
         controller.pauseForLifecycle()
     }
 
+    fun releaseForBackground() {
+        controller.releaseForBackground()
+    }
+
     fun resumeForLifecycle() {
         controller.resumeForLifecycle()
     }

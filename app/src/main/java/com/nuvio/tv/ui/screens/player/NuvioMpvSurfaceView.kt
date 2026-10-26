@@ -381,6 +381,11 @@ class NuvioMpvSurfaceView @JvmOverloads constructor(
         return shadow.obsCoreIdle
     }
 
+    override fun isEofReachedNow(): Boolean {
+        if (!initialized) return false
+        return shadow.obsEofReached
+    }
+
     /**
      * Evidence the picture is alive, for live-freeze detection. Advanced once per sample while the
      * shadow's mirrored `estimated-vf-fps` proves frames are still flowing, and held when they stop
@@ -1029,6 +1034,7 @@ ctl {
             "pause" to MPV.mpvFormat.MPV_FORMAT_FLAG,
             "paused-for-cache" to MPV.mpvFormat.MPV_FORMAT_FLAG,
             "core-idle" to MPV.mpvFormat.MPV_FORMAT_FLAG,
+            "eof-reached" to MPV.mpvFormat.MPV_FORMAT_FLAG,
             "time-pos" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             "duration" to MPV.mpvFormat.MPV_FORMAT_DOUBLE,
             "vid" to MPV.mpvFormat.MPV_FORMAT_STRING,

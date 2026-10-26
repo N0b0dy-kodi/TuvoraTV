@@ -4,6 +4,7 @@ import com.nuvio.tv.core.diagnostics.LogRedaction
 import android.util.Log
 import androidx.media3.common.PlaybackException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
@@ -223,6 +224,7 @@ internal fun PlayerRuntimeController.onMpvPlaybackEnded(event: com.nuvio.tv.play
         ) {
             return@launch
         }
+        if (attemptMpvVodAutoRetry(detailedError)) return@launch
         cancelFirstFrameWatchdog()
         Log.w(PlayerRuntimeController.TAG, "mpv end-file error: $detailedError")
         _uiState.update {
@@ -234,4 +236,36 @@ internal fun PlayerRuntimeController.onMpvPlaybackEnded(event: com.nuvio.tv.play
             )
         }
     }
+}
+
+/**
+ * VOD libmpv failures reload the same stream twice before the error screen (upstream #3796), resuming
+ * where playback stopped. The legacy mpv log carries no FFmpeg HTTP status, so [MpvVodRecoveryPolicy]
+ * is asked with none; live feeds keep their own reconnect ladder.
+ */
+private fun PlayerRuntimeController.attemptMpvVodAutoRetry(detailedError: String): Boolean {
+    if (!MpvVodRecoveryPolicy.shouldAutoRetry(isLiveFeed(), errorRetryCount, httpStatus = null)) return false
+    val savedPosition = if (hasRenderedFirstFrame) {
+        mpvView?.currentPositionMs()?.coerceAtLeast(0L) ?: 0L
+    } else {
+        0L
+    }
+    val paused = userPausedManually
+    errorRetryCount++
+    mpvVodRetryResumeMs = savedPosition
+    Log.w(
+        PlayerRuntimeController.TAG,
+        "MPV VOD auto-retry $errorRetryCount/${MpvVodRecoveryPolicy.MAX_AUTO_RETRIES} for: $detailedError"
+    )
+    errorRetryJob?.cancel()
+    errorRetryJob = scope.launch {
+        showRecoveryOverlay()
+        delay(MpvVodRecoveryPolicy.RETRY_DELAY_MS)
+        releasePlayer(flushPlaybackState = false)
+        if (savedPosition > 0L) {
+            _uiState.update { it.copy(pendingSeekPosition = savedPosition) }
+        }
+        initializePlayer(currentStreamUrl, currentHeaders, startPaused = paused)
+    }
+    return true
 }
