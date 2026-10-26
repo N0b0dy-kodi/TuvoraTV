@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.NuvioEngineConfig
 import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.cache.CacheDataSink
@@ -92,6 +93,19 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
         return factory
     }
 
+    private fun computePrefetchDepthChunks(
+        connections: Int,
+        chunkBytes: Long
+    ): Int {
+        if (!nuvioPerformanceModeEnabled) return connections + 1
+        val chunkMb = (chunkBytes / (1024L * 1024L)).toInt().coerceAtLeast(1)
+        val safeNativeMb = NuvioExoPlayerPerformanceHelper.getSafeNativeMemoryLimitMb(context)
+        val reserveMb = NuvioExoPlayerPerformanceHelper.targetBufferSizeMb.coerceAtLeast(0)
+        return com.nuvio.tv.ui.screens.settings.MemoryBudget.prefetchDepthChunks(
+            connections, chunkMb, safeNativeMb, reserveMb
+        )
+    }
+
     fun configureSubtitleParsing(
         extractorsFactory: ExtractorsFactory?,
         subtitleParserFactory: SubtitleParser.Factory?
@@ -167,20 +181,25 @@ internal class PlayerMediaSourceFactory(private val context: Context) {
                 setDefaultRequestProperties(sanitizedHeaders)
                 setUserAgent(DEFAULT_USER_AGENT)
             }
+            val sessionConnections = if (mp4SessionMode) 1 else parallelConnectionCount
+            val sessionChunkBytes = if (mp4SessionMode) {
+                MP4_SESSION_CHUNK_BYTES
+            } else {
+                // Runtime enforcement of the tier chunk cap: a value
+                // persisted before the cap existed (or on another device)
+                // must not bypass it.
+                parallelChunkSizeKb
+                    .coerceAtMost(com.nuvio.tv.ui.screens.settings.MemoryBudget.tierMaxChunkMb * 1024)
+                    .toLong() * 1024L
+            }
+            val effectiveNative =
+                nuvioPerformanceModeEnabled || NuvioEngineConfig.get().isNativeAllocationEnabled()
             ParallelRangeDataSource.Factory(
                 okHttpFactory,
-                if (mp4SessionMode) 1 else parallelConnectionCount,
-                if (mp4SessionMode) {
-                    MP4_SESSION_CHUNK_BYTES
-                } else {
-                    // Runtime enforcement of the tier chunk cap: a value
-                    // persisted before the cap existed (or on another device)
-                    // must not bypass it.
-                    parallelChunkSizeKb
-                        .coerceAtMost(com.nuvio.tv.ui.screens.settings.MemoryBudget.tierMaxChunkMb * 1024)
-                        .toLong() * 1024L
-                },
-                useNativeMemory = nuvioPerformanceModeEnabled,
+                sessionConnections,
+                sessionChunkBytes,
+                useNativeMemory = effectiveNative,
+                prefetchDepthChunks = computePrefetchDepthChunks(sessionConnections, sessionChunkBytes),
                 shouldAllowBackgroundPrefetch = { parallelStartupPrefetchUnlocked.get() },
                 onResolvedUri = { resolved -> currentVodCacheResolvedUrl = resolved?.toString() }
             )
