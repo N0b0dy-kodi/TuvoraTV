@@ -292,6 +292,7 @@ internal class AndroidMedia3BackendFactory(
             applicationContext,
             forcePcm = plan.audioMode == AudioMode.DECODE,
             audioExtensionMode = audioExtensionRendererModeFor(plan),
+            hardwareFirstVideo = plan.decoderMode != DecoderMode.SOFTWARE,
         )
             .setExtensionRendererMode(extensionRendererModeFor(plan))
             .setMediaCodecSelector(codecSelector)
@@ -466,7 +467,52 @@ private class ContractRenderersFactory(
     context: Context,
     private val forcePcm: Boolean,
     private val audioExtensionMode: Int,
+    private val hardwareFirstVideo: Boolean,
 ) : DefaultRenderersFactory(context) {
+    /**
+     * Fallback otherwise lands a 4K stream on Android's software decoder while the hardware can take
+     * it; the platform renderer is rebuilt with the same settings and only its decoder list changes.
+     */
+    override fun buildVideoRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        eventHandler: android.os.Handler,
+        eventListener: androidx.media3.exoplayer.video.VideoRendererEventListener,
+        allowedVideoJoiningTimeMs: Long,
+        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+    ) {
+        val built = java.util.ArrayList<androidx.media3.exoplayer.Renderer>()
+        super.buildVideoRenderers(
+            context,
+            extensionRendererMode,
+            mediaCodecSelector,
+            enableDecoderFallback,
+            eventHandler,
+            eventListener,
+            allowedVideoJoiningTimeMs,
+            built,
+        )
+        for (renderer in built) {
+            if (hardwareFirstVideo &&
+                renderer::class.java == androidx.media3.exoplayer.video.MediaCodecVideoRenderer::class.java
+            ) {
+                val builder = androidx.media3.exoplayer.video.MediaCodecVideoRenderer.Builder(context)
+                    .setCodecAdapterFactory(codecAdapterFactory)
+                    .setMediaCodecSelector(mediaCodecSelector)
+                    .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
+                    .setEnableDecoderFallback(enableDecoderFallback)
+                    .setEventHandler(eventHandler)
+                    .setEventListener(eventListener)
+                    .setMaxDroppedFramesToNotify(50)
+                out.add(HardwareFirstLiveVideoRenderer(context, builder))
+            } else {
+                out.add(renderer)
+            }
+        }
+    }
+
     override fun buildAudioRenderers(
         context: Context,
         extensionRendererMode: Int,
