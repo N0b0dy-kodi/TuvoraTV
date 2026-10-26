@@ -36,6 +36,19 @@ class RestoredUpstreamPlayerFixesWiringTest {
         )
     }
 
+    @Test
+    fun `VOD exo player builds the hardware-first video renderer`() {
+        val init = source("PlayerRuntimeControllerInitialization.kt")
+        assertTrue(
+            "SubtitleOffsetRenderersFactory must swap in HardwareFirstVideoRenderer",
+            init.contains("out.add(HardwareFirstVideoRenderer(")
+        )
+        assertTrue(
+            "the replacement renderer must carry the DV7-to-HEVC mapping",
+            init.contains("mapDv7ToHevc = mapDv7ToHevcEnabled")
+        )
+    }
+
     private fun source(name: String): String = File(playerDir(), name).readText()
 
     private fun playerDir(): File {

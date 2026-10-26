@@ -834,6 +834,8 @@ internal fun PlayerRuntimeController.initializePlayer(
             val codecSelector = createDolbyVisionFallbackCodecSelector(
                 convertToDv81Active = convertToDv81Active
             )
+            // Warm the software-decoder name set off main for the VIDEO_DECODER log line.
+            scope.launch(Dispatchers.Default) { softwareOnlyDecoderNames }
             val vc1SoftwareFallbackActive = vc1SoftwarePreferredStreamUrls.contains(url)
             isVc1SoftwareFallbackActiveForCurrentPlayback = vc1SoftwareFallbackActive
             // PCM-fallback rebuilds must ALSO drop the AC3-transcode path: the force-PCM sink
@@ -877,6 +879,7 @@ internal fun PlayerRuntimeController.initializePlayer(
                 forceOpticalPassthrough = isForcePassthroughActive,
                 playbackSpeedProvider = { _uiState.value.playbackSpeed },
                 initialForcePcm = hasTriedAudioPcmFallback,
+                mapDv7ToHevc = mapDv7ToHevcEnabled,
                 onPlaybackSpeedAwareAudioSinkCreated = { playbackSpeedAwareAudioSink = it },
                 onFfmpegAudioRendererChanged = { renderer ->
                     ffmpegAudioRenderer = renderer
@@ -1639,7 +1642,9 @@ internal fun PlayerRuntimeController.initializePlayer(
                         )
                         Log.i(
                             PlayerRuntimeController.TAG,
-                            "VIDEO_DECODER: name=$decoderName initMs=$initializationDurationMs host=${currentStreamUrl.safeHost()}"
+                            "VIDEO_DECODER: name=$decoderName " +
+                                "software=${isSoftwareVideoDecoderName(decoderName, softwareOnlyDecoderNames)} " +
+                                "initMs=$initializationDurationMs host=${currentStreamUrl.safeHost()}"
                         )
                     }
 
@@ -2153,9 +2158,55 @@ private class SubtitleOffsetRenderersFactory(
     private val forceOpticalPassthrough: Boolean,
     private val playbackSpeedProvider: () -> Float,
     private val initialForcePcm: Boolean = false,
+    private val mapDv7ToHevc: Boolean = false,
     private val onPlaybackSpeedAwareAudioSinkCreated: (PlaybackSpeedAwareAudioSink) -> Unit,
     private val onFfmpegAudioRendererChanged: (FfmpegAudioRenderer?) -> Unit
 ) : DefaultRenderersFactory(context) {
+
+    /**
+     * Swaps the platform video renderer for [HardwareFirstVideoRenderer] so decoder fallback never
+     * lands a 4K H.264/HEVC stream on Android's software decoder while the hardware can take it
+     * (upstream 17af03251 + 5386e958a).
+     */
+    override fun buildVideoRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        eventHandler: Handler,
+        eventListener: VideoRendererEventListener,
+        allowedVideoJoiningTimeMs: Long,
+        out: ArrayList<Renderer>
+    ) {
+        val built = ArrayList<Renderer>()
+        super.buildVideoRenderers(
+            context,
+            extensionRendererMode,
+            mediaCodecSelector,
+            enableDecoderFallback,
+            eventHandler,
+            eventListener,
+            allowedVideoJoiningTimeMs,
+            built
+        )
+        // Same settings as the platform renderer it replaces; the factory's own DV7 setting only reaches that one.
+        for (renderer in built) {
+            if (renderer::class.java == MediaCodecVideoRenderer::class.java) {
+                val builder = MediaCodecVideoRenderer.Builder(context)
+                    .setCodecAdapterFactory(getCodecAdapterFactory())
+                    .setMediaCodecSelector(mediaCodecSelector)
+                    .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
+                    .setEnableDecoderFallback(enableDecoderFallback)
+                    .setEventHandler(eventHandler)
+                    .setEventListener(eventListener)
+                    .setMaxDroppedFramesToNotify(MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)
+                    .setMapDV7ToHevc(mapDv7ToHevc)
+                out.add(HardwareFirstVideoRenderer(context, builder))
+            } else {
+                out.add(renderer)
+            }
+        }
+    }
 
     override fun buildAudioSink(
         context: Context,
