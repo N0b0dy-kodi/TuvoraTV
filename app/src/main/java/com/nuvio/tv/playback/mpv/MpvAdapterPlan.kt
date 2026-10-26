@@ -113,9 +113,9 @@ internal object MpvAdapterPlanFactory {
             // source-replacement reuse lane depends on the core surviving `stop`.
             "idle" to "yes",
             "terminal" to "no",
-            // Raw mpv/FFmpeg messages may contain provider URLs; normalized facts are the only
-            // clean-adapter diagnostic channel.
-            "msg-level" to "all=no",
+            // Raw mpv/FFmpeg messages may contain provider URLs (B116): only the URL-free FFmpeg
+            // protocol errors are heard, so a failed load can be classified (B189).
+            "msg-level" to MpvFailureCause.MSG_LEVEL,
             // Live: surface a genuinely-dead channel fast so PlaybackSession's fresh-link reconnect
             // can start, instead of hanging up to mpv's 60s default before end-file. Transient
             // mid-stream drops are already absorbed by the socket-level stream-lavf-o reconnect

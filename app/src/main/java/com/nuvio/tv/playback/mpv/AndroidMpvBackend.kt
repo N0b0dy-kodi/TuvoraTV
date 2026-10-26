@@ -5,6 +5,7 @@ import android.view.Surface
 import com.nuvio.tv.playback.core.FailureCode
 import com.nuvio.tv.playback.core.FailureDomain
 import com.nuvio.tv.playback.core.FailurePhase
+import com.nuvio.tv.playback.core.HttpStatusFailures
 import com.nuvio.tv.playback.core.PlaybackEndReason
 import com.nuvio.tv.playback.core.PlaybackEngineState
 import com.nuvio.tv.playback.core.PlaybackFailure
@@ -143,6 +144,7 @@ internal interface MpvNativeObserver {
     fun property(name: String, value: String) = Unit
     fun property(name: String, value: MPVNode) = Unit
     fun event(id: Int, data: MPVNode) = Unit
+    fun logMessage(prefix: String, level: Int, text: String) = Unit
 }
 
 internal class AndroidMpvBackendFactory(
@@ -201,6 +203,9 @@ internal class AndroidMpvBackend(
     private var appliedSubtitlesEnabled = plan.preInitOptions["sid"] != "no"
 
     @Volatile private var nativeLaneFailed = false
+
+    /** What FFmpeg logged during the current load (B189); written on mpv's event thread. */
+    @Volatile private var loadEvidence = MpvLoadEvidence.NONE
 
     private suspend fun <T> onNativeLane(phase: FailurePhase, action: suspend () -> PlaybackResult<T>): PlaybackResult<T> {
         fun failure() = PlaybackResult.Failure(PlaybackFailure(
@@ -605,7 +610,15 @@ internal class AndroidMpvBackend(
         }
     }
 
+    override fun logMessage(prefix: String, level: Int, text: String) {
+        loadEvidence = MpvFailureCause.observe(loadEvidence, prefix, level, text)
+    }
+
     override fun event(id: Int, data: MPVNode) {
+        // Synchronous, on mpv's event thread: lines of the new load may arrive before the
+        // launched handler runs, and a previous load's cause must never classify this one.
+        if (id == MPV_EVENT_START_FILE) loadEvidence = MpvLoadEvidence.NONE
+        val evidence = if (id == MPV_EVENT_END_FILE) loadEvidence else MpvLoadEvidence.NONE
         scope.launch {
             if (terminalEventsSuppressed) return@launch
             when (id) {
@@ -623,22 +636,22 @@ internal class AndroidMpvBackend(
                     lifecycle = MpvBackendLifecycle.PLAYING
                     _events.tryEmit(MpvBackendEvent.StateObserved(PlaybackEngineState.READY, !paused, false))
                 }
-                MPV_EVENT_END_FILE -> handleEndFile(parseEndFile(data))
+                MPV_EVENT_END_FILE -> handleEndFile(parseEndFile(data), evidence)
                 MPV_EVENT_SHUTDOWN -> _events.tryEmit(MpvBackendEvent.Ended(PlaybackEndReason.SHUTDOWN))
             }
         }
     }
 
-    private fun handleEndFile(end: ParsedMpvEndFile) {
+    private fun handleEndFile(end: ParsedMpvEndFile, evidence: MpvLoadEvidence) {
         lifecycle = MpvBackendLifecycle.IDLE
         if (end.reason == MpvEndReason.STOP) stopAcknowledgement?.complete(true)
         when (end.reason) {
             MpvEndReason.EOF -> _events.tryEmit(MpvBackendEvent.Ended(PlaybackEndReason.EOF))
-            MpvEndReason.ERROR -> _events.tryEmit(MpvBackendEvent.Failed(normalizeMpvError(end.fileError)))
+            MpvEndReason.ERROR -> _events.tryEmit(MpvBackendEvent.Failed(normalizeMpvError(end.fileError, evidence)))
             MpvEndReason.STOP -> _events.tryEmit(MpvBackendEvent.Ended(PlaybackEndReason.STOPPED))
             MpvEndReason.QUIT -> _events.tryEmit(MpvBackendEvent.Ended(PlaybackEndReason.SHUTDOWN))
             MpvEndReason.REDIRECT -> Unit // Internal redirect transition, not a terminal playback fact.
-            MpvEndReason.UNKNOWN -> _events.tryEmit(MpvBackendEvent.Failed(normalizeMpvError(null)))
+            MpvEndReason.UNKNOWN -> _events.tryEmit(MpvBackendEvent.Failed(normalizeMpvError(null, evidence)))
         }
     }
 
@@ -856,6 +869,7 @@ internal class AndroidMpvBackend(
 
 private class AndroidMpvNativeCore(private val mpv: MPV) : MpvNativeCore {
     private var observerBridge: MPV.EventObserver? = null
+    private var logObserverBridge: MPV.LogObserver? = null
 
     override fun create(context: Context) = mpv.create(context)
     override fun setOption(name: String, value: String): Boolean = mpv.setOptionString(name, value) >= 0
@@ -870,12 +884,19 @@ private class AndroidMpvNativeCore(private val mpv: MPV) : MpvNativeCore {
             override fun eventProperty(property: String, value: MPVNode) = observer.property(property, value)
             override fun event(eventId: Int, data: MPVNode) = observer.event(eventId, data)
         }
+        val logBridge = object : MPV.LogObserver {
+            override fun logMessage(prefix: String, level: Int, text: String) = observer.logMessage(prefix, level, text)
+        }
         observerBridge = bridge
+        logObserverBridge = logBridge
         mpv.addObserver(bridge)
+        mpv.addLogObserver(logBridge)
     }
     override fun removeObserver(observer: MpvNativeObserver) {
         observerBridge?.let(mpv::removeObserver)
+        logObserverBridge?.let(mpv::removeLogObserver)
         observerBridge = null
+        logObserverBridge = null
     }
     override fun observeLong(name: String) = mpv.observeProperty(name, MPV.mpvFormat.MPV_FORMAT_INT64)
     override fun observeDouble(name: String) = mpv.observeProperty(name, MPV.mpvFormat.MPV_FORMAT_DOUBLE)
@@ -989,7 +1010,24 @@ internal fun parseMpvTracks(node: MPVNode): ParsedMpvTracks {
 }
 
 
-internal fun normalizeMpvError(raw: String?): PlaybackFailure {
+internal fun normalizeMpvError(raw: String?, evidence: MpvLoadEvidence = MpvLoadEvidence.NONE): PlaybackFailure {
+    // B189: `raw` is mpv_error_string() ("loading failed"); the cause FFmpeg logged comes first.
+    evidence.httpStatus?.let { return HttpStatusFailures.forStatus(it, FailurePhase.PLAYBACK) }
+    when (evidence.transport) {
+        MpvTransportFault.TIMEOUT -> return PlaybackFailure(
+            FailureCode.NETWORK_TIMEOUT, FailureDomain.NETWORK, FailurePhase.PLAYBACK,
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        MpvTransportFault.TLS -> return PlaybackFailure(
+            FailureCode.TLS_HANDSHAKE_FAILED, FailureDomain.TLS, FailurePhase.PLAYBACK,
+            Retryability.HANDOFF_ELIGIBLE,
+        )
+        MpvTransportFault.UNREACHABLE -> return PlaybackFailure(
+            FailureCode.NETWORK_UNREACHABLE, FailureDomain.NETWORK, FailurePhase.PLAYBACK,
+            Retryability.RETRYABLE_WITH_FRESH_REQUEST,
+        )
+        null -> Unit
+    }
     val value = raw.orEmpty().lowercase()
     val inferredStatus = inferHttpAuthorizationStatus(value)
     val (code, domain, retryability) = when {
