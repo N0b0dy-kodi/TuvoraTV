@@ -308,6 +308,47 @@ class AndroidMpvBackendTest {
         assertEquals(MpvBackendLifecycle.ATTACHED, backend.lifecycle)
     }
 
+    /** B189: the end-file failure is classified from the FFmpeg line logged during this load. */
+    @Test
+    fun `END_FILE error carries the HTTP status FFmpeg logged for this load`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        assertSuccess(backend.start())
+        val failed = async(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.first { it is MpvBackendEvent.Failed } as MpvBackendEvent.Failed
+        }
+
+        core.observer?.event(6, MPVNode.None) // START_FILE
+        core.observer?.logMessage("ffmpeg", 30, "https: HTTP error 403 Forbidden")
+        core.observer?.event(7, endFileError("loading failed"))
+        runCurrent()
+
+        assertEquals(com.nuvio.tv.playback.core.FailureCode.AUTHORIZATION_REJECTED, failed.await().failure.code)
+    }
+
+    @Test
+    fun `a previous load's FFmpeg error never classifies the next load`() = runTest {
+        val core = FakeCore()
+        val backend = backend(core)
+        assertSuccess(backend.attachSurface(FakeLease()))
+        assertSuccess(backend.start())
+        val failed = async(start = CoroutineStart.UNDISPATCHED) {
+            backend.events.first { it is MpvBackendEvent.Failed } as MpvBackendEvent.Failed
+        }
+
+        core.observer?.logMessage("ffmpeg", 30, "https: HTTP error 403 Forbidden")
+        core.observer?.event(6, MPVNode.None) // START_FILE of the next load
+        core.observer?.event(7, endFileError("unrecognized file format"))
+        runCurrent()
+
+        assertEquals(com.nuvio.tv.playback.core.FailureCode.DEMUX_FAILED, failed.await().failure.code)
+    }
+
+    private fun endFileError(fileError: String) = MPVNode.MapNode(
+        mapOf("reason" to MPVNode.StringNode("error"), "file_error" to MPVNode.StringNode(fileError)),
+    )
+
     @Test
     fun `opaque external subtitle resolves privately and attaches once`() = runTest {
         val core = FakeCore()

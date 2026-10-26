@@ -252,53 +252,10 @@ internal object Media3FailureMapper {
         error.causeChain().filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
             .firstOrNull()
             ?.let { response ->
-                return when (sourceStatus(response.responseCode, response.responseMessage)) {
-                    // T10 (W2 device pass): a 404 read "could not be reached over the network" and
-                    // ran the live reconnect loop. The stream is not there: say so, at once.
-                    404 -> failure(
-                        FailureCode.SOURCE_NOT_FOUND,
-                        FailureDomain.NETWORK,
-                        phase,
-                        Retryability.FATAL,
-                        httpStatus = 404,
-                        statusProvenance = com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED,
-                    )
-                    // 410 Gone: an expired provider link; the session re-mints once where it can.
-                    410 -> failure(
-                        FailureCode.SOURCE_NOT_FOUND,
-                        FailureDomain.NETWORK,
-                        phase,
-                        Retryability.RETRYABLE_WITH_FRESH_REQUEST,
-                        httpStatus = 410,
-                        statusProvenance = com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED,
-                    )
-                    401, 403 -> failure(
-                        FailureCode.AUTHORIZATION_REJECTED,
-                        FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
-                        phase,
-                        Retryability.FATAL,
-                        httpStatus = response.responseCode,
-                        statusProvenance = com.nuvio.tv.playback.core.HttpStatusProvenance.CONFIRMED,
-                    )
-                    429 -> failure(
-                        FailureCode.PROVIDER_CONNECTION_LIMIT,
-                        FailureDomain.AUTHORIZATION_PROVIDER_LIMIT,
-                        phase,
-                        Retryability.FATAL,
-                    )
-                    in 500..599 -> failure(
-                        FailureCode.NETWORK_UNREACHABLE,
-                        FailureDomain.NETWORK,
-                        phase,
-                        Retryability.RETRYABLE_IN_PLACE,
-                    )
-                    else -> failure(
-                        FailureCode.NETWORK_UNREACHABLE,
-                        FailureDomain.NETWORK,
-                        phase,
-                        Retryability.RETRYABLE_WITH_FRESH_REQUEST,
-                    )
-                }
+                return com.nuvio.tv.playback.core.HttpStatusFailures.forStatus(
+                    sourceStatus(response.responseCode, response.responseMessage),
+                    phase,
+                )
             }
         if (error.causeChain().any { it is javax.net.ssl.SSLException }) {
             return failure(
