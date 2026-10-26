@@ -91,8 +91,7 @@ internal fun isRetryablePlaybackError(error: PlaybackException): Boolean {
         PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> {
             val httpCause = error.findCauseOfType<HttpDataSource.InvalidResponseCodeException>()
             if (httpCause != null) {
-                val code = httpCause.responseCode
-                !(code == 400 || code == 401 || code == 403 || code == 404 || code == 410)
+                !isPermanentHttpStatus(httpCause.responseCode)
             } else {
                 true
             }
@@ -117,6 +116,10 @@ internal fun isRetryablePlaybackError(error: PlaybackException): Boolean {
         else -> false
     }
 }
+
+/** HTTP statuses a retry of the same request gets again, so retrying only delays the error. */
+internal fun isPermanentHttpStatus(code: Int): Boolean =
+    code == 400 || code == 401 || code == 403 || code == 404 || code == 410
 
 /** A codec capability rejection cannot recover by rebuilding the same graph. */
 internal fun PlaybackException.isDeterministicVideoCapabilityFailure(): Boolean {

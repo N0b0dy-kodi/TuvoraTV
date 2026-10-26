@@ -383,18 +383,25 @@ internal fun PlayerRuntimeController.startProgressUpdates() {
                         currentPosition = displayPosition,
                         duration = playerDuration
                     )
-                    val nearEnd = playerDuration > 0L && pos >= (playerDuration - 500L)
-                    val naturalEnded = nearEnd && shouldTreatAsNaturalPlaybackCompletion(
+                    val reachedEnd = MpvVodRecoveryPolicy.isAtEnd(
+                        positionMs = pos,
+                        durationMs = playerDuration,
+                        eofReached = view.isEofReachedNow() && !isLiveFeed()
+                    )
+                    val naturalEnded = reachedEnd && shouldTreatAsNaturalPlaybackCompletion(
                         hasRenderedFirstFrame = firstFrameReady,
                         hasFatalError = !_uiState.value.error.isNullOrBlank(),
                         durationMs = playerDuration,
                         isLiveFeed = isLiveFeed(),
                     )
                     val wasEnded = _uiState.value.playbackEnded
+                    if (MpvVodRecoveryPolicy.shouldResetRetries(errorRetryCount, playingNow && firstFrameReady, pos, mpvVodRetryResumeMs)) {
+                        resetErrorRetryState()
+                    }
                     _uiState.update { state ->
                         state.copy(
                             isPlaying = playingNow,
-                            isBuffering = !firstFrameReady || cacheBuffering,
+                            isBuffering = if (naturalEnded) false else (!firstFrameReady || cacheBuffering),
                             showLoadingOverlay = if (state.loadingOverlayEnabled) !firstFrameReady else false,
                             // Snap the loading-logo fill to 100% once playback is
                             // ready so the logo finishes filling on dismissal.

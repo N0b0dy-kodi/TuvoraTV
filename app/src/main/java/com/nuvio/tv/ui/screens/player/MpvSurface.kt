@@ -52,6 +52,8 @@ interface MpvSurface {
     fun isPlayingNow(): Boolean
     fun isPausedForCacheNow(): Boolean
     fun isCoreIdleNow(): Boolean
+    /** mpv `eof-reached` (set while keep-open parks the core on the last frame); lock-free. */
+    fun isEofReachedNow(): Boolean
     fun currentPositionMs(): Long
     fun durationMs(): Long
     fun hasVideoTrackNow(): Boolean

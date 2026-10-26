@@ -585,6 +585,8 @@ class PlayerRuntimeController(
     internal var hasRetriedCurrentStreamAfterMediaPeriodHolderCrash: Boolean = false
     internal var timeoutRecoveryAttempts: Int = 0
     internal var errorRetryCount: Int = 0
+    /** Where the last libmpv VOD auto-retry resumed; stable playback past it earns the retries back. */
+    internal var mpvVodRetryResumeMs: Long = 0L
     internal var consecutiveAutoPlayCount: Int = 0
     internal var errorRetryJob: Job? = null
     internal var stableProgressResetJob: Job? = null

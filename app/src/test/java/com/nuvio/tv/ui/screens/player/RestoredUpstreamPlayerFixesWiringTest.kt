@@ -49,6 +49,18 @@ class RestoredUpstreamPlayerFixesWiringTest {
         )
     }
 
+    @Test
+    fun `mpv VOD ends on eof-reached and retries failures through the shared policy`() {
+        val events = source("PlayerRuntimeControllerPlaybackEvents.kt")
+        val link = source("PlayerRuntimeControllerIptvLinkRefresh.kt")
+        val view = source("NuvioMpvSurfaceView.kt")
+        assertTrue("progress loop must ask the policy for the end", events.contains("MpvVodRecoveryPolicy.isAtEnd("))
+        assertTrue("progress loop must read the eof-reached mirror", events.contains("isEofReachedNow()"))
+        assertTrue("eof-reached must be observed", view.contains("\"eof-reached\" to MPV.mpvFormat.MPV_FORMAT_FLAG"))
+        assertTrue("VOD end-file errors must try the auto-retry first", link.contains("attemptMpvVodAutoRetry(detailedError)"))
+        assertTrue("retries must be earned back", events.contains("MpvVodRecoveryPolicy.shouldResetRetries("))
+    }
+
     private fun source(name: String): String = File(playerDir(), name).readText()
 
     private fun playerDir(): File {
