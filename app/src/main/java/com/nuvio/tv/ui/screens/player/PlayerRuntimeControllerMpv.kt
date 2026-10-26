@@ -259,6 +259,35 @@ internal fun PlayerRuntimeController.pauseForLifecycle() {
     }
 }
 
+/**
+ * Frees the hardware video decoder once the app is no longer visible, so the next foreground app gets
+ * it without a forced reclaim (upstream #4282; on BRAVIA/MediaTek a forced reclaim of the Dolby Vision
+ * decoder can wedge the TV's resource manager). Reuses the background-crash release and the paused
+ * rebuild on resume. VOD ExoPlayer only: live feeds keep their rejoin-the-edge lifecycle.
+ */
+internal fun PlayerRuntimeController.releaseForBackground() {
+    if (isUsingMpvEngine() || pendingBackgroundCrashRecovery || isLiveFeed()) return
+    val player = _exoPlayer ?: return
+    if (currentStreamUrl.isEmpty()) return
+    backgroundCrashSavedPositionMs = player.currentPosition.coerceAtLeast(0L)
+    // Pausing while buffering fires no isPlaying change, so neither the pause save nor the pause
+    // scrobble ran; do both while the player still reports a position.
+    saveWatchProgress()
+    emitPauseScrobbleForCurrentProgress()
+    pendingBackgroundCrashRecovery = true
+    errorRetryJob?.cancel()
+    releasePlayer(flushPlaybackState = false)
+}
+
+/** True when a player ON_STOP means the app left the foreground, not an in-app navigation or exit. */
+internal fun isAppBackgroundStop(
+    isFinishing: Boolean,
+    isChangingConfigurations: Boolean,
+    hostState: androidx.lifecycle.Lifecycle.State
+): Boolean = !isFinishing &&
+    !isChangingConfigurations &&
+    !hostState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+
 internal fun PlayerRuntimeController.resumeForLifecycle() {
     isInBackground = false
 

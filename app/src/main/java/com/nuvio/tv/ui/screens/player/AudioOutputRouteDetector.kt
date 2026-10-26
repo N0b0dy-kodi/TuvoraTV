@@ -4,12 +4,14 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.os.Build
 import java.util.Locale
 
 internal data class AudioOutputRoute(
     val key: String,
     val label: String,
-    val isBluetooth: Boolean
+    val isBluetooth: Boolean,
+    val isUsb: Boolean = false
 )
 
 internal object AudioOutputRouteDetector {
@@ -38,10 +40,38 @@ internal object AudioOutputRouteDetector {
         return AudioOutputRoute(
             key = "type:${typeName(type).lowercase(Locale.US)}|name:$normalizedLabel",
             label = label,
-            isBluetooth = isBluetoothType(type)
+            isBluetooth = isBluetoothType(type),
+            isUsb = isUsbType(type)
         )
     }
 
+    /**
+     * Whether media audio goes to a USB output. Below API 33 [detect] ranks HDMI ahead of USB,
+     * while Android sends media to a connected USB output, so any connected USB output counts.
+     */
+    @SuppressLint("NewApi")
+    fun isUsbMediaOutput(context: Context, route: AudioOutputRoute?): Boolean {
+        if (route?.isUsb == true) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return false
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            ?: return false
+        return runCatching {
+            audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { isUsbType(it.type) }
+        }.getOrDefault(false)
+    }
+
+    fun isUsbType(type: Int): Boolean = when (type) {
+        AudioDeviceInfo.TYPE_USB_HEADSET,
+        AudioDeviceInfo.TYPE_USB_DEVICE,
+        AudioDeviceInfo.TYPE_USB_ACCESSORY -> true
+        else -> false
+    }
+
+    /**
+     * Lower rank = preferred when scanning all outputs (Bluetooth media first).
+     * Aligns with Media3 Bluetooth types for ranking, not with HDMI-first detection
+     * (API 33+ attribute routing handles the "remote vs HDMI" case).
+     */
     @SuppressLint("NewApi")
     private fun routeRank(type: Int): Int = when (type) {
         AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> 0
