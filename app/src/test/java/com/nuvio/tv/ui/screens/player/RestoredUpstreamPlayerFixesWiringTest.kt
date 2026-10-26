@@ -1,0 +1,48 @@
+package com.nuvio.tv.ui.screens.player
+
+import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Wiring guards for upstream player fixes that were merged as ancestors of the fork's main but
+ * whose call sites were dropped while resolving upstream-merge conflicts (2026-10-25 audit). The
+ * policies themselves have unit tests; these assert the legacy VOD controller still calls them,
+ * so the next conflict resolution can't silently drop the wiring again.
+ */
+class RestoredUpstreamPlayerFixesWiringTest {
+
+    @Test
+    fun `audio failures climb the shared fallback ladder instead of an inline copy`() {
+        val init = source("PlayerRuntimeControllerInitialization.kt")
+        val recovery = source("PlayerRuntimeControllerErrorRecovery.kt")
+
+        assertEquals(
+            "inline ladder sets hasTriedAudioPcmFallback without arming the rebuild",
+            0,
+            Regex("""if \(!hasTriedAudioPcmFallback\)""").findAll(init).count()
+        )
+        assertTrue(
+            "audio-track/decoder and stuck-playing failures must use tryNextAudioFallbackStep",
+            Regex("""tryNextAudioFallbackStep\(currentPosition\)""").findAll(init).count() >= 2
+        )
+        val helper = recovery.substringAfter("fun PlayerRuntimeController.tryNextAudioFallbackStep", "")
+        assertTrue("tryNextAudioFallbackStep must exist", helper.isNotEmpty())
+        assertTrue(
+            "FORCE_PCM step must arm the PCM rebuild",
+            helper.substringAfter("Step.FORCE_PCM").substringBefore("Step.DISABLE_AUDIO")
+                .contains("pendingAudioPcmFallbackRebuild = true")
+        )
+    }
+
+    private fun source(name: String): String = File(playerDir(), name).readText()
+
+    private fun playerDir(): File {
+        val root = generateSequence(File(requireNotNull(System.getProperty("user.dir"))).canonicalFile) {
+            it.parentFile
+        }.firstOrNull { File(it, "app/src/main").isDirectory }
+            ?: error("Cannot locate NuvioTV root")
+        return File(root, "app/src/main/java/com/nuvio/tv/ui/screens/player")
+    }
+}
